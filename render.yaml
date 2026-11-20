@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: saenggakbyeol-tutor
+    runtime: node
+    plan: free
+    buildCommand: npm run check
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: APP_ACCESS_PIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

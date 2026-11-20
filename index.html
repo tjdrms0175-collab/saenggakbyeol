@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#8B78E8" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="생각별" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="description" content="자세한 힌트와 정답 확인으로 스스로 풀게 돕는 초등학생용 AI 선생님" />
+  <title>생각별 ✨ | AI 홈 과외 선생님</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <div class="background-blob blob-a" aria-hidden="true"></div>
+  <div class="background-blob blob-b" aria-hidden="true"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#main" aria-label="생각별 홈">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span><strong>생각별</strong><small>스스로 푸는 즐거움</small></span>
+      </a>
+      <div class="top-actions">
+        <button class="header-button install-button" id="installAppBtn" type="button" aria-label="생각별을 휴대폰에 설치하는 방법">📲 <span>앱 설치</span></button>
+        <span class="mode-badge" id="modeBadge"><span class="status-dot"></span> 데모 모드</span>
+        <button class="header-button settings-button" id="settingsBtn" type="button" aria-label="AI 연결 설정 열기">⚙ <span>AI 설정</span></button>
+        <button class="header-button parent-button" id="parentBtn" type="button">♧ <span>학부모 모드</span></button>
+      </div>
+    </header>
+
+    <div id="offlineBanner" class="offline-banner" role="status" hidden>📴 인터넷이 연결되지 않았어요. 저장된 화면에서 데모 학습은 할 수 있지만 AI와 음성 인식은 제한될 수 있어요.</div>
+    <main class="layout" id="main">
+      <aside class="sidebar" aria-label="학습 설정">
+        <div class="side-topline"><span class="mini-sparkle">✳</span> 나만의 공부 공간</div>
+        <h1>오늘은 어떤 걸<br /><em>배워볼까요?</em> <span aria-hidden="true">🌈</span></h1>
+        <p class="side-subtitle">내 학년과 과목을 골라주세요. 생각별 선생님이 딱 맞는 힌트를 준비할게요!</p>
+
+        <section class="setting-section" aria-labelledby="gradeTitle">
+          <div class="section-heading"><h2 id="gradeTitle">① 나의 학년</h2><span>하나를 골라요</span></div>
+          <div class="grade-options" id="gradeOptions" role="group" aria-label="학년 선택">
+            <button class="grade-chip" data-grade="초1~2" type="button">초1~2</button>
+            <button class="grade-chip" data-grade="초3~4" type="button">초3~4</button>
+            <button class="grade-chip" data-grade="초5~6" type="button">초5~6</button>
+          </div>
+        </section>
+
+        <section class="setting-section subject-section" aria-labelledby="subjectTitle">
+          <div class="section-heading"><h2 id="subjectTitle">② 공부할 과목</h2><span>언제든 바꿀 수 있어요</span></div>
+          <div class="subject-options" id="subjectOptions" role="group" aria-label="과목 선택">
+            <button type="button" class="subject-chip" data-subject="국어"><span class="subject-emoji">📖</span><span>국어</span></button>
+            <button type="button" class="subject-chip" data-subject="수학"><span class="subject-emoji">🔢</span><span>수학</span></button>
+            <button type="button" class="subject-chip" data-subject="사회"><span class="subject-emoji">🌍</span><span>사회</span></button>
+            <button type="button" class="subject-chip" data-subject="과학"><span class="subject-emoji">🔬</span><span>과학</span></button>
+            <button type="button" class="subject-chip" data-subject="영어"><span class="subject-emoji">🔤</span><span>영어</span></button>
+          </div>
+        </section>
+
+        <section class="side-note" aria-label="생각별의 약속">
+          <span class="note-icon">💡</span>
+          <div><strong>생각별의 특별한 약속</strong><p>정답을 대신 풀어주지 않아요. 자세한 힌트로 스스로 풀면, 맞았는지도 알려줄게요!</p></div>
+        </section>
+        <div class="side-decoration" aria-hidden="true">✿　✧　✿</div>
+      </aside>
+
+      <section class="chat-card" aria-labelledby="chatTitle">
+        <div class="chat-heading">
+          <div class="chat-tutor-mini">
+            <div class="avatar avatar-mini" aria-hidden="true">
+              <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path d="M17 38L23 16L40 28M83 38L77 16L60 28" fill="#b6eee5" stroke="#65b5aa" stroke-width="4" stroke-linejoin="round"/><rect x="10" y="24" width="80" height="65" rx="31" fill="#b6eee5" stroke="#65b5aa" stroke-width="4"/><circle cx="33" cy="55" r="5" fill="#42576a"/><circle cx="67" cy="55" r="5" fill="#42576a"/><circle cx="22" cy="69" r="8" fill="#ffb6ad" opacity=".85"/><circle cx="78" cy="69" r="8" fill="#ffb6ad" opacity=".85"/><path d="M43 69Q50 77 57 69" stroke="#42576a" stroke-width="3.6" fill="none" stroke-linecap="round"/><path d="M49 12l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffd87e"/></svg>
+            </div>
+            <div><h2 id="chatTitle">생각별 선생님 <span aria-hidden="true">✨</span></h2><p><span class="online-dot"></span> 함께 생각하는 시간 · <span id="currentClass">초3~4 · 수학</span></p></div>
+          </div>
+          <button type="button" class="new-question" id="newProblemBtn">↻ <span>새 문제</span></button>
+        </div>
+
+        <div class="chat-body" id="chatBody" role="log" aria-label="선생님과의 채팅" aria-live="polite" aria-relevant="additions text">
+          <div class="welcome-card" id="welcomeCard">
+            <div class="welcome-decoration star-one" aria-hidden="true">✦</div>
+            <div class="welcome-decoration star-two" aria-hidden="true">✧</div>
+            <div class="avatar avatar-large" aria-label="웃고 있는 민트색 생각별 선생님 캐릭터" role="img">
+              <svg viewBox="0 0 160 150" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><ellipse cx="80" cy="140" rx="59" ry="7" fill="#a9c8d1" opacity=".18"/><path d="M34 62L39 20L67 43M126 62L121 20L93 43" fill="#b7efe6" stroke="#66b9ae" stroke-width="5.5" stroke-linejoin="round"/><rect x="18" y="35" width="124" height="100" rx="50" fill="#b7efe6" stroke="#66b9ae" stroke-width="5.5"/><path d="M32 109Q80 124 128 109" stroke="#8fd7c9" stroke-width="4" fill="none"/><circle cx="56" cy="87" r="7" fill="#3a5160"/><circle cx="104" cy="87" r="7" fill="#3a5160"/><circle cx="36" cy="105" r="12" fill="#ffb5af" opacity=".8"/><circle cx="124" cy="105" r="12" fill="#ffb5af" opacity=".8"/><path d="M69 104Q80 115 91 104" stroke="#3a5160" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M80 3l5 12 12 5-12 5-5 12-5-12-12-5 12-5z" fill="#ffdc85"/><circle cx="27" cy="31" r="4" fill="#fba8bd"/><circle cx="137" cy="31" r="5" fill="#d0befb"/></svg>
+            </div>
+            <div class="welcome-kicker">안녕! 나는 생각별이야</div>
+            <h3>우리 함께 <span>생각의 별</span>을<br />반짝여 볼까요?</h3>
+            <p>모르는 문제도 괜찮아요. 한 걸음씩 힌트를 따라가면<br class="desktop-break" /> 어느새 스스로 풀 수 있을 거예요! 🌟</p>
+            <div class="sample-prompts" id="samplePrompts"></div>
+          </div>
+        </div>
+
+        <div class="chat-bottom">
+          <div class="assist-row">
+            <div class="hint-progress" aria-label="힌트 진행 단계">
+              <span class="progress-label">받은 힌트</span>
+              <span class="star-track" id="starTrack" aria-label="현재 힌트 0회">✦</span>
+              <span class="progress-counter" id="progressCounter">0회 · 무제한</span>
+            </div>
+            <div class="hint-actions">
+              <button id="moreHintBtn" class="assist-button hint-more" type="button" disabled>💡 힌트 더 주세요</button>
+              <button id="understoodBtn" class="assist-button understood" type="button" disabled>🌟 이해했어요!</button>
+            </div>
+          </div>
+          <div class="voice-toolbar" aria-label="목소리로 공부하기">
+            <div class="voice-toolbar-label"><span aria-hidden="true">🎧</span><span>말로 질문하세요! 잠깐 쉬어도 5.5초 동안 기다려요.</span></div>
+            <div class="voice-toolbar-actions">
+              <button id="autoSpeakBtn" class="auto-speak-toggle" type="button" aria-pressed="true" title="선생님 답변 자동 읽기 켜기 또는 끄기">🔊 자동 읽기 켜짐</button>
+            </div>
+          </div>
+          <div class="photo-preview" id="photoPreview" hidden>
+            <img id="photoThumbnail" alt="첨부한 문제 사진 미리보기" /><span>문제 사진 첨부됨</span><button type="button" id="removePhotoBtn" aria-label="사진 삭제">×</button>
+          </div>
+          <form class="message-form" id="messageForm" autocomplete="off">
+            <label class="sr-only" for="messageInput">선생님에게 보낼 질문</label>
+            <textarea id="messageInput" rows="2" maxlength="1600" placeholder="모르는 문제를 여기 적어보세요! 😊" aria-label="질문 입력"></textarea>
+            <div class="message-controls">
+              <label class="upload-button" for="photoInput" title="문제 사진 올리기">📷 <span>사진 올리기</span></label>
+              <input type="file" accept="image/png,image/jpeg,image/webp" id="photoInput" class="sr-only" aria-label="문제 사진 첨부" />
+              <button id="micBtn" class="microphone-button" type="button" aria-pressed="false" aria-label="음성으로 질문하기"><span aria-hidden="true">🎤</span> <span id="micLabel">말로 질문</span></button>
+              <span class="input-helper">Enter 전송 · Shift + Enter 줄바꿈</span>
+              <button type="submit" class="send-button" id="sendBtn"><span>보내기</span><span aria-hidden="true">➤</span></button>
+            </div>
+          </form>
+          <div class="voice-feedback" id="voiceFeedback" role="status" aria-live="polite">🎤 마이크를 누르고 질문하세요. 인식된 글자를 확인한 뒤 <strong>보내기</strong>를 눌러요.</div>
+          <p class="privacy-footnote" id="privacyFootnote">🔒 학습 기록은 이 브라우저 탭에만 임시 저장돼요. <span id="photoNote">데모에서는 사진을 읽지 못해요.</span><br />🎙️ 음성 인식은 브라우저의 온라인 서비스에서 처리될 수 있어요. 마이크를 누를 때만 인식을 시작해요.</p>
+        </div>
+      </section>
+    </main>
+    <footer class="page-footer">틀려도 괜찮아요. 중요한 건 <strong>스스로 생각하는 힘!</strong> 💜</footer>
+  </div>
+
+  <div class="modal-backdrop" id="settingsModal" hidden>
+    <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">선생님 연결하기</span><h2 id="settingsTitle">⚙ AI 설정</h2></div><button type="button" class="close-modal" data-close="settingsModal" aria-label="닫기">×</button></div>
+      <p class="modal-description">무료 데모·내 컴퓨터 Ollama 또는 다양한 AI API를 선택할 수 있어요. 선생님 목소리는 아래에서 따로 설정할 수 있어요.</p>
+      <fieldset class="mode-options"><legend>사용할 모드를 선택해요</legend>
+        <label class="radio-card"><input type="radio" name="mode" value="demo" checked /><span><strong>🧸 데모 모드</strong><small>API 키 없이 예시 힌트 체험</small></span></label>
+        <label class="radio-card"><input type="radio" name="mode" value="local" /><span><strong>🖥️ 무료 로컬 AI (Ollama)</strong><small>내 컴퓨터의 무료 모델 사용</small></span></label>
+        <label class="radio-card"><input type="radio" name="mode" value="live" /><span><strong>🌐 외부 AI API 연결</strong><small>Gemini · Claude · OpenRouter · Groq 등 선택</small></span></label>
+      </fieldset>
+      <div class="local-guide" id="localGuide"><strong>🖥️ 무료 로컬 AI 연결 안내</strong><p>① <a href="https://ollama.com/download/windows" target="_blank" rel="noopener noreferrer">Ollama 설치</a> → ② PowerShell에 <code>ollama pull gemma3:1b</code> 입력 → ③ Ollama 실행 → ④ 무료 로컬 AI 선택</p><div id="localStatus" class="local-status" role="status">연결 상태를 확인 중이에요…</div><button type="button" id="recheckLocalBtn" class="recheck-button">연결 상태 다시 확인</button><p>RAM 8GB 기본 모델은 사진을 읽지 못해요.</p></div>
+      <div class="api-provider-fields" id="apiProviderFields" hidden>
+        <label class="field-label" for="apiProviderSelect">① API 제공업체</label>
+        <select id="apiProviderSelect" class="provider-select">
+          <option value="gemini">Google Gemini (Google AI Studio)</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="openrouter">OpenRouter (다양한 AI 모델)</option>
+          <option value="groq">Groq</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="mistral">Mistral AI</option>
+          <option value="together">Together AI</option>
+          <option value="xai">xAI</option>
+          <option value="custom">기타 OpenAI 호환 API (사용자 지정)</option>
+        </select>
+        <p class="provider-guide" id="providerGuide"></p>
+        <label class="field-label" for="apiModelInput">② AI 모델 이름 <span>(각 서비스가 제공하는 모델로 변경 가능)</span></label>
+        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.5-flash-lite" />
+        <div id="customApiRow" hidden><label class="field-label" for="apiBaseUrlInput">사용자 지정 기본 URL (HTTPS)</label><input class="key-input model-input" id="apiBaseUrlInput" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/v1" /><p class="setting-help">OpenAI 호환 Chat Completions API의 기본 주소를 입력하세요. /chat/completions는 자동으로 붙어요.</p></div>
+        <label class="field-label" for="apiKeyInput">③ API 키 <span>(키는 이 브라우저 탭에 임시 보관 · 서버에 등록했으면 공란 가능)</span></label>
+        <input class="key-input" id="apiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="선택한 제공업체의 API 키" />
+        <p class="setting-help">API 키는 서버를 통해 선택한 서비스로 전송되며 브라우저 저장소·서버 파일에 기록하지 않아요. 이 컴퓨터에서 개인용으로 사용하세요. 무료 한도와 과금은 제공업체/모델별로 달라요. 사진 인식은 선택한 모델이 지원해야 해요.</p>
+        <div class="api-connection-test">
+          <button type="button" id="testApiConnectionBtn" class="recheck-button">🔌 API 연결 테스트</button>
+          <p class="setting-help">실제 AI 서버에 짧은 시험 질문을 보내므로 무료 한도를 조금 사용할 수 있어요. API 키는 저장되지 않습니다.</p>
+          <p class="connection-test-status" id="apiConnectionStatus" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <button type="button" id="openVoiceSettingsBtn" class="voice-settings-entry">🌷 선생님 목소리 설정 <span>목소리 선택 · 미리 듣기 · 속도 조절 ›</span></button>
+      <div class="setting-status" id="settingStatus" role="status"></div>
+      <button id="saveSettingsBtn" type="button" class="primary-wide">설정 적용하기 ✨</button>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="voiceModal" hidden>
+    <section class="modal voice-modal" role="dialog" aria-modal="true" aria-labelledby="voiceModalTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">원할 때만 변경해요</span><h2 id="voiceModalTitle">🌷 선생님 목소리 설정</h2></div><button type="button" class="close-modal" data-close="voiceModal" aria-label="목소리 설정 닫기">×</button></div>
+      <p class="modal-description">목소리와 속도를 골라 미리 들어보세요. 설정은 자동 저장돼요.</p>
+          <section id="teacherVoicePanel" class="teacher-voice-panel" aria-label="선생님 목소리 고르기">
+            <div class="teacher-voice-header"><strong>🌷 상냥한 여자 선생님 목소리</strong><span>미리 듣고 고를 수 있어요</span></div>
+            <div class="teacher-voice-grid">
+              <label class="teacher-voice-field">음성 방식
+                <select id="teacherVoiceMode">
+                  <option value="browser">무료 · 브라우저 여성 음성 (추천)</option>
+                  <option value="gemini">✨ 자연스러운 Gemini AI 음성 (요금 가능)</option>
+                </select>
+              </label>
+              <label class="teacher-voice-field" id="browserVoiceRow">선생님 목소리
+                <select id="teacherVoiceSelect"><option value="auto">🌷 가장 부드러운 한국어 목소리 자동 선택</option></select>
+              </label>
+              <label class="teacher-voice-field" id="geminiVoiceRow" hidden>Gemini 선생님 목소리
+                <select id="geminiVoiceSelect">
+                  <option value="Zephyr">🌸 Zephyr · 밝고 다정한 느낌</option>
+                  <option value="Callirrhoe">🌼 Callirrhoe · 편안하고 차분한 느낌</option>
+                  <option value="Aoede">💜 Aoede · 부드럽고 자연스러운 느낌</option>
+                </select>
+              </label>
+              <label class="teacher-voice-field" id="ttsKeyRow" hidden>Gemini 음성 API 키 (선택)
+                <input id="geminiTtsKeyInput" type="password" autocomplete="off" placeholder="AI 설정의 Gemini 키를 사용하거나 별도 키 입력" />
+              </label>
+              <label class="teacher-voice-field" id="teacherSpeechRateRow">말하기 속도
+                <select id="speechRateSelect" aria-label="선생님 음성 읽기 속도">
+                  <option value="0.82">조금 천천히</option>
+                  <option value="0.92" selected>상냥하게 (추천)</option>
+                  <option value="1.02">보통</option>
+                  <option value="1.12">조금 빠르게</option>
+                </select>
+              </label>
+            </div>
+            <p class="teacher-voice-note" id="teacherVoiceInfo">가능한 한국어 여성 음성 중 자연스러운 목소리를 먼저 선택해요. 음성은 PC와 브라우저마다 달라요.</p>
+            <div class="teacher-voice-buttons">
+              <button type="button" id="voicePreviewBtn" class="teacher-preview-button">▶ 목소리 미리 듣기</button>
+              <button type="button" id="voiceStopBtn" class="teacher-stop-button">⏹ 중지</button>
+            </div>
+          </section>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="parentModal" hidden>
+    <section class="modal parent-modal" role="dialog" aria-modal="true" aria-labelledby="parentTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">우리 아이의 성장 기록</span><h2 id="parentTitle">📚 오늘의 학습 리포트</h2></div><button type="button" class="close-modal" data-close="parentModal" aria-label="닫기">×</button></div>
+      <p class="modal-description" id="reportDate"></p>
+      <div class="report-summary"><div class="report-stat"><span>질문한 문제</span><strong id="statProblems">0<small>개</small></strong></div><div class="report-stat"><span>사용한 힌트</span><strong id="statHints">0<small>회</small></strong></div><div class="report-stat"><span>정답 확인</span><strong id="statSolved">0<small>개</small></strong></div><div class="report-stat"><span>스스로 이해 표시</span><strong id="statUnderstood">0<small>개</small></strong></div></div>
+      <h3 class="report-list-title">오늘 어떤 걸 공부했나요?</h3>
+      <div id="reportList" class="report-list"></div>
+      <div class="report-bottom"><p>※ ‘정답 확인’은 시스템이 명확한 답이라고 판단한 기록이고, ‘이해했어요’는 아이가 직접 누른 자기 보고입니다. AI의 자유서술형 정답 판정은 틀릴 수 있습니다. 오늘의 기록은 이 기기 브라우저에 저장됩니다. 기기를 바꾸면 자동 동기화되지 않습니다.</p><button id="clearReportBtn" type="button" class="clear-report">기록 지우기</button></div>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="installModal" hidden>
+    <section class="modal mobile-install-modal" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">손안의 AI 선생님</span><h2 id="installTitle">📲 생각별 앱 설치</h2></div><button type="button" class="close-modal" id="installCloseBtn" aria-label="닫기">×</button></div>
+      <p class="modal-description" id="installInstructions">휴대폰에서 이 주소를 열고 홈 화면에 추가하면 앱처럼 쓸 수 있어요.</p>
+      <div class="install-note"><strong>🔒 HTTPS 연결이 필요해요</strong><p>노트북의 127.0.0.1 주소는 휴대폰에서 열리지 않아요. 앱 설치와 마이크 이용을 위해 생각별 서버를 HTTPS 주소로 연결해야 해요.</p></div>
+      <button type="button" class="primary-wide" id="installModalCloseBtn">확인했어요</button>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="accessGate" hidden>
+    <section class="modal mobile-install-modal" role="dialog" aria-modal="true" aria-labelledby="accessTitle">
+      <h2 id="accessTitle">🔐 생각별 비밀번호</h2>
+      <p class="modal-description">안전한 학습을 위해 보호자가 설정한 접근번호를 입력해 주세요.</p>
+      <form id="accessForm" autocomplete="off">
+        <label class="field-label" for="accessPin">접근번호</label>
+        <input id="accessPin" class="key-input" type="password" inputmode="numeric" autocomplete="off" minlength="4" maxlength="128" required />
+        <p id="accessError" class="connection-test-status" role="alert"></p>
+        <button class="primary-wide" type="submit">학습 시작하기 ✨</button>
+      </form>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

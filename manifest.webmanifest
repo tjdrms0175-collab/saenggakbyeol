@@ -1,0 +1,42 @@
+{
+  "id": "/",
+  "name": "생각별 선생님 - AI 홈 과외",
+  "short_name": "생각별",
+  "description": "초등학생의 생각을 키우는 다정한 AI 홈 과외 선생님. 사진, 음성, 무제한 힌트.",
+  "lang": "ko-KR",
+  "start_url": "/?source=homescreen",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone"
+  ],
+  "background_color": "#FBF9FF",
+  "theme_color": "#8B78E8",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
