@@ -111,3 +111,8 @@
 .voice-modal{width:min(100%,620px)}
 .voice-modal .teacher-voice-panel{margin:0;padding:16px}
 @media(max-width:500px){.voice-settings-entry{flex-direction:column;align-items:flex-start}.voice-modal .teacher-voice-panel{padding:12px}}
+
+/* v13: AI-first reviewed hints and problem re-analysis UI */
+.problem-understanding{display:inline-flex;align-items:center;max-width:100%;margin-top:7px;border:1px solid #e9e4ff;border-radius:12px;background:#f7f4ff;padding:7px 11px;color:#7160ad;font-size:11.5px;font-weight:750;line-height:1.5;overflow-wrap:anywhere}
+.hint-recheck{color:#6557a8;background:#f1edff}.hint-recheck:hover:not(:disabled){background:#e7e0ff}
+@media(max-width:750px){.hint-actions{flex-wrap:wrap}.hint-actions .assist-button{min-width:calc(50% - 5px)}.hint-actions .hint-recheck{flex-basis:100%}.problem-understanding{font-size:11px}}

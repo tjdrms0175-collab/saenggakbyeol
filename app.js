@@ -92,7 +92,7 @@
     catch (_) { return {}; }
   })();
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: savedPreferences.modeVersion === 11 && savedPreferences.mode === 'demo' ? 'demo' : 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.8-flash', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -505,6 +505,7 @@
     stars.setAttribute('aria-label', `지금까지 힌트 ${state.hintLevel}회, 횟수 제한 없음`);
     $('#progressCounter').textContent = `${state.hintLevel}회 · 무제한`;
     $('#moreHintBtn').disabled = !state.active || state.busy;
+    $('#recheckProblemBtn').disabled = !state.active || state.busy;
     $('#understoodBtn').disabled = !state.active || state.busy;
     $('#sendBtn').disabled = state.busy;
     $('#messageInput').disabled = state.busy;
@@ -526,7 +527,7 @@
     $('#welcomeCard').hidden = false;
     updateProgress();
   }
-  function addMessage(role, message, { photo = false, loading = false } = {}) {
+  function addMessage(role, message, { photo = false, loading = false, focus = '' } = {}) {
     $('#welcomeCard').hidden = true;
     const box = document.createElement('div');
     box.className = `chat-message ${role}`;
@@ -559,6 +560,12 @@
       if (message) bubble.appendChild(document.createTextNode(message));
     }
     content.appendChild(bubble);
+    if (role === 'teacher' && !loading && focus) {
+      const understanding = document.createElement('div');
+      understanding.className = 'problem-understanding';
+      understanding.textContent = `🔎 문제 이해: ${focus.slice(0, 135)}`;
+      content.appendChild(understanding);
+    }
     if (role === 'teacher' && !loading && message && voiceSupported) {
       const replay = document.createElement('button');
       replay.type = 'button';
@@ -594,161 +601,8 @@
     Object.assign(record, changes);
     saveRecords();
   }
-  function recognizeDemoScenario(question) {
-    if (state.subject === '국어') return 'korean';
-    if (state.subject === '수학') {
-      if (/사과|나누|똑같이|공평하게|÷|\//.test(question)) return 'divide';
-      if (/곱|×|\*|구구단/.test(question)) return 'multiply';
-      return 'math';
-    }
-    return state.subject;
-  }
-  function mockTutor(question, latestInput, level, photoOnly) {
-    if (photoOnly) return '사진을 올려 주었네요! 📷 데모에서는 사진 속 글자를 읽을 수 없어요. 문제에 보이는 숫자나 문장 하나만 적어 줄래요?';
-    // Do not mistake "sum scores and divide" for distributing objects to people.
-    if (state.subject === '수학' && /점수|평균|고른\s*점수/.test(question)) {
-      const scores = [...question.matchAll(/(\d{1,4}(?:\.\d+)?)\s*점(?!수)/g)].map(m => m[1]);
-      if (scores.length >= 2 && /평균|고른\s*점수|같은\s*점수|합친\s*뒤|모두\s*합|나누|나눠/.test(question)) {
-        const divisor = /(?:어떤|무슨)\s*(?:수|숫자|값)(?:로|으로)\s*나누/.test(question);
-        const hints = divisor ? [
-          `${scores.map(n=>n+'점').join(', ')}은 각각 한 과목의 점수예요. 모두 더한 점수를 고르게 나누려면 점수 칸이 몇 개인지 세어 볼까요? 🌟`,
-          '과목 이름마다 동그라미 하나씩 그려 보세요. 동그라미가 몇 개인가요?',
-          '총점을 과목마다 공평하게 나눈다고 생각해요. 나눌 칸은 몇 개가 필요할까요?',
-          '나누는 수는 점수의 크기가 아니라 과목 수예요. 과목 이름을 하나씩 세어 볼까요?'
-        ] : [
-          `${scores.map(n=>n+'점').join(', ')}을 모두 더한 다음 점수의 개수로 나누는 것이 평균이에요. 먼저 어떤 덧셈식을 쓸까요?`,
-          '과목이 몇 개인지 먼저 세어 볼까요?',
-          '총점을 점수의 개수로 나누려면 어떤 식을 쓰면 좋을까요?',
-          '평균이 가장 작은 점수와 가장 큰 점수 사이에 있는지 확인해 볼까요?'
-        ];
-        return hints[(Math.max(1, level)-1)%hints.length];
-      }
-    }
-    if (state.subject === '수학' && /(\d+)\s*분/.test(question) && /시간/.test(question)) {
-      const minutes = question.match(/(\d+)\s*분/)[1];
-      const details = [
-        `1시간은 60분이에요. ${minutes}분을 60분씩 묶으면 1시간짜리 묶음은 몇 개 만들어질까요? ⏰`,
-        `${minutes}분에서 60분짜리 묶음을 차례로 떼어 보세요. 한 묶음씩 뗀 뒤 남은 분은 어디에 적을까요?`,
-        '시간을 나타내는 칸과 분을 나타내는 칸을 두 개 그려 보세요. 각 칸에는 무엇을 넣어야 할까요?',
-        '60분짜리 묶음이 몇 개인지 세어 시간 칸에 적어 보세요. 남는 분은 어떻게 나타낼까요?',
-        '내가 적은 시간을 다시 전부 분으로 바꾸어 보세요. 처음 주어진 분과 같은가요?',
-        '시계 긴 바늘의 한 바퀴를 60분짜리 묶음으로 생각해 보세요. 바퀴 수와 남는 분은 어떻게 나뉘나요?',
-        '색연필로 큰 묶음과 남은 분을 다른 색으로 표시해 보세요. 이제 각각 세어 볼까요?',
-        '처음 숫자에서 60을 한 번씩 빼는 계산을 적어 보세요. 어디까지 뺄 수 있나요?'
-      ];
-      const turn = Math.max(0, level - 1);
-      return `${turn >= details.length ? '다른 방법도 생각해 봐요! ' : ''}${details[turn % details.length]}`;
-    }
-    const scenario = recognizeDemoScenario(question);
-    const hints = {
-      divide: [
-        '사과를 한 사람에게 하나씩 차례로 준다고 상상해 볼까요? 🍎',
-        '모든 사람에게 한 개씩 주고 나면, 사과는 한 번에 몇 개 줄어들까요?',
-        '남은 사과를 다시 똑같이 나눠 주는 일을 몇 번 반복할 수 있을까요?',
-        '이제 한 사람 앞에 쌓인 사과를 손가락으로 세어 볼까요?',
-        '세 사람의 사과를 다시 합치면 처음 개수와 똑같아질까요?'
-      ],
-      multiply: [
-        '곱셈을 똑같은 크기의 묶음 여러 개라고 생각해 볼까요? 🧩',
-        '한 묶음에는 몇 개가 있고, 그런 묶음이 몇 개인가요?',
-        '묶음을 하나씩 더해 가며 숫자가 어떻게 커지는지 볼까요?',
-        '지금까지 찾은 규칙을 마지막 묶음에도 적용하면 어떨까요?',
-        '순서를 바꾸어 묶어도 같은 수가 되는지 확인해 볼까요?'
-      ],
-      math: [
-        '문제에서 이미 알고 있는 숫자 두 개를 먼저 찾아볼까요? 🔎',
-        '문제가 묻는 것은 전체일까요, 남은 양일까요, 한 사람의 몫일까요?',
-        '작은 숫자로 바꿔 똑같은 상황을 만들어 보면 어떨까요?',
-        '그림이나 동그라미로 나타내면 어떤 계산이 떠오르나요?',
-        '찾은 계산 방법이 문제 상황과 잘 맞는지 다시 확인해 볼까요?'
-      ],
-      korean: [
-        '글 속에서 가장 중요해 보이는 말이나 행동을 하나 찾아볼까요? 📖',
-        '그 말이나 행동이 나오기 전에 어떤 일이 있었는지 살펴볼까요?',
-        '내가 등장인물이라면 그 순간 어떤 기분이 들었을까요?',
-        '내 생각을 뒷받침하는 문장을 글에서 찾을 수 있을까요?',
-        '글의 처음과 끝에서 달라진 점을 하나 말해 볼까요?'
-      ],
-      사회: [
-        '내가 사는 동네에서 비슷한 모습을 본 적이 있나요? 🌍',
-        '그 일이 우리 주변 사람들에게 어떤 영향을 줄까요?',
-        '나와 다른 입장에 있는 사람은 어떻게 생각할까요?',
-        '그 일이 없다면 우리 생활이 어떻게 달라질까요?',
-        '지금까지 떠올린 생각을 실제 생활의 예와 연결해 볼까요?'
-      ],
-      과학: [
-        '먼저 눈으로 관찰할 수 있는 변화가 무엇인지 찾아볼까요? 🔬',
-        '한 가지만 다르게 바꾸면 어떤 일이 생길 것 같나요?',
-        '비슷한 일을 집이나 학교에서 본 적이 있나요?',
-        '내 생각이 맞는지 확인할 작은 실험을 떠올려 볼까요?',
-        '처음 예상한 것과 실제 관찰한 것을 비교해 볼까요?'
-      ],
-      영어: [
-        '문장에서 누가 행동하는지 알려 주는 단어를 찾아볼까요? 🔤',
-        '그다음에 그 사람이 무엇을 하는지 나타내는 말을 찾아볼까요?',
-        '아는 단어부터 표시하면 문장의 뜻이 조금 더 보이나요?',
-        '시간을 알려 주는 말이 있는지 찾아볼까요?',
-        '찾은 단어들을 순서대로 살펴보면 어떤 뜻이 떠오르나요?'
-      ]
-    };
-    // The offline demo also varies its vocabulary and depth by grade band.
-    const lowerGrade = {
-      divide: ['사과를 한 사람에게 한 개씩 주어 볼까요? 🍎', '세 사람에게 똑같이 주려면 누구부터 줄까요?', '한 바퀴 돌고 남은 사과를 세어 볼까요?', '또 한 바퀴 돌려 줄 수 있을까요?', '한 사람 앞에 사과가 몇 개 있는지 세어 볼까요?'],
-      multiply: ['동그라미로 똑같은 묶음을 그려 볼까요?', '한 묶음에 동그라미가 몇 개 있나요?', '그런 묶음이 모두 몇 개 있나요?', '묶음마다 하나씩 손가락으로 세어 볼까요?', '모든 묶음을 차근차근 다시 세어 볼까요?'],
-      math: ['문제에서 숫자 하나를 찾아볼까요?', '그 숫자는 무엇을 세는 숫자일까요?', '동그라미를 그려서 나타내 볼까요?', '동그라미를 옮기면 어떻게 될까요?', '처음 그림과 지금 그림을 비교해 볼까요?'],
-      korean: ['글에서 마음에 남는 말을 찾아볼까요?', '그 말을 누가 했나요?', '그때 무슨 일이 있었나요?', '그 사람 표정은 어땠을까요?', '왜 그렇게 생각했는지 글에서 찾아볼까요?'],
-      사회: ['우리 동네에서 본 적이 있나요?', '그곳에는 누가 있나요?', '그 사람들은 무슨 일을 할까요?', '그곳이 없으면 불편할까요?', '어떤 점이 불편할지 하나만 말해 볼까요?'],
-      과학: ['무엇이 달라졌는지 눈으로 찾아볼까요?', '처음 모습은 어땠나요?', '지금 모습은 어떤가요?', '집에서도 비슷한 걸 본 적이 있나요?', '두 모습의 다른 점 하나를 말해 볼까요?'],
-      영어: ['알고 있는 영어 단어 하나를 찾아볼까요?', '사람을 뜻하는 단어가 보이나요?', '움직임을 나타내는 단어는 무엇일까요?', '그 두 단어를 손가락으로 가리켜 볼까요?', '그림을 떠올리면 뜻이 조금 보이나요?']
-    };
-    const upperGrade = {
-      divide: ['"공평하게 나눈다"는 뜻을 수학적으로 어떻게 나타낼 수 있을까요?', '전체 개수와 나누는 사람 수를 어떻게 연결할 수 있을까요?', '곱셈과 나눗셈의 관계를 이용해 생각할 수 있을까요?', '지금 떠올린 방법을 그림이나 식으로 표현해 볼까요?', '반대 계산으로 내 생각이 맞는지 점검할 수 있을까요?'],
-      multiply: ['곱셈을 반복 덧셈으로 바꿔 나타내면 어떨까요?', '곱하는 순서를 바꾸면 무엇이 달라질까요?', '이미 아는 곱셈식을 이용해 새로운 식을 만들 수 있을까요?', '다른 방식으로 묶어 같은 문제를 표현할 수 있을까요?', '두 방법의 결과가 같아야 하는 이유를 설명할 수 있을까요?'],
-      math: ['주어진 조건과 구해야 하는 값을 구분해 볼까요?', '각 숫자 사이의 관계를 식으로 표현할 수 있을까요?', '작은 수로 바꾼 예시에서 일정한 규칙을 찾을 수 있을까요?', '찾은 규칙이 원래 문제에도 적용되는 이유는 무엇일까요?', '다른 방법으로도 내 추론을 확인할 수 있을까요?'],
-      korean: ['글쓴이가 특별히 강조한 표현은 무엇일까요?', '그 표현이 등장인물의 마음과 어떻게 연결될까요?', '앞뒤 문장의 분위기가 달라지는 지점을 찾을 수 있을까요?', '내 해석을 뒷받침하는 근거를 문장에서 찾을 수 있을까요?', '다른 해석도 가능한지 비교해 볼까요?']
-    };
-    const chosen = (state.grade === '초1~2' ? lowerGrade[scenario] : state.grade === '초5~6' ? upperGrade[scenario] : null) || hints[scenario] || hints.math;
-    const index = Math.max(0, level - 1) % chosen.length;
-    const extra = level > chosen.length ? [
-      '이번에는 그림이나 표로 다른 풀이를 시도해 보세요. ',
-      '앞에서 찾은 방법을 반대 방향으로 확인해 보세요. ',
-      '문제의 중요한 숫자나 문장을 다시 살펴보세요. ',
-      '비슷한 상황을 사과나 블록으로 만들어 보세요. '
-    ][Math.floor((level - chosen.length - 1) / chosen.length) % 4] : '';
-    const isStuck = /모르겠|답\s*알려|정답|못\s*하겠|그냥\s*알려|싫어/.test(latestInput);
-    const hasAttempt = !isStuck && latestInput !== question && latestInput.length > 0 && !/힌트.*주세요/.test(latestInput);
-    const prefix = isStuck ? '괜찮아요! 천천히 해도 돼요. 🌷 ' : hasAttempt ? '좋은 시도예요! ⭐ ' : '';
-    const studyClue = state.subject === '수학' && level <= 5 ? (/×|\*|곱/.test(question) ? '곱셈은 같은 크기의 묶음을 반복해서 세는 방법이에요. ' : /분|시간/.test(question) ? '큰 시간 단위와 작은 시간 단위를 나누어 생각해 보세요. ' : '') : '';
-    return prefix + studyClue + extra + chosen[index];
-  }
-  function checkDemoMathAnswer(question, answer) {
-    if (state.subject !== '수학' || !/^(?:답은|정답은)?\s*\d/.test(answer.trim())) return null;
-    const normalized = answer.trim().replace(/\s+/g, '');
-    const scoreNums = [...question.matchAll(/(\d{1,4}(?:\.\d+)?)\s*점(?!수)/g)].map(m=>Number(m[1]));
-    if (scoreNums.length >= 2 && /점수|평균|고른\s*점수/.test(question) &&
-        /평균|고른\s*점수|같은\s*점수|합친\s*뒤|모두\s*합|나누|나눠/.test(question)) {
-      const candidate = normalized.match(/^(?:답은|정답은)?(-?\d+(?:\.\d+)?)(?:점|개|과목|으로(?:나눠요|나눕니다|요)?|입니다|이에요|요)?$/);
-      if (!candidate) return null;
-      const asksDivisor = /(?:어떤|무슨)\s*(?:수|숫자|값)(?:로|으로)\s*나누/.test(question);
-      const expected = asksDivisor ? scoreNums.length : scoreNums.reduce((a,b)=>a+b,0)/scoreNums.length;
-      return Math.abs(Number(candidate[1])-expected)<1e-8?'correct':'incorrect';
-    }
-    const time = question.match(/(\d+)\s*분/);
-    if (time && /시간/.test(question)) {
-      const m = normalized.match(/^(?:답은|정답은)?(\d+)시간(\d+)분(?:이에요|입니다|요)?$/);
-      if (!m) return null;
-      return +m[1] === Math.floor(+time[1] / 60) && +m[2] === (+time[1] % 60) ? 'correct' : 'incorrect';
-    }
-    const spoken = question.replace(/(\d+)\s*(곱하기|더하기|빼기|나누기)\s*(\d+)/g, (_, a, op, b) => `${a} ${{ 곱하기: '×', 더하기: '+', 빼기: '-', 나누기: '÷' }[op]} ${b}`);
-    const calc = spoken.match(/(\d+)\s*([+＋×*÷/−-])\s*(\d+)/);
-    const candidate = normalized.match(/^(?:답은|정답은)?(\d+)(?:개|명|입니다|이에요|예요|요)?$/);
-    if (!calc || !candidate) return null;
-    const a = +calc[1], b = +calc[3], symbol = calc[2];
-    const expected = /[×*]/.test(symbol) ? a * b : /[÷/]/.test(symbol) ? a / b : /[−-]/.test(symbol) ? a - b : a + b;
-    return +candidate[1] === expected ? 'correct' : 'incorrect';
-  }
   const PROVIDER_SETTINGS = {
-    gemini: { label: 'Google Gemini', model: 'gemini-3.5-flash-lite', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 기본 추천: gemini-3.5-flash-lite · 무료 한도는 계정마다 다릅니다.' },
+    gemini: { label: 'Google Gemini', model: 'gemini-3.8-flash', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 정확도 우선 추천: gemini-3.8-flash · 무료 한도는 계정마다 다릅니다.' },
     openai: { label: 'OpenAI', model: 'gpt-4.1-mini', guide: '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API 키 발급</a> · 별도 API 비용이 발생할 수 있어요.' },
     anthropic: { label: 'Anthropic Claude', model: 'claude-sonnet-4-5', guide: '<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Claude API 키 발급</a> · 계정별 요금이 적용돼요.' },
     openrouter: { label: 'OpenRouter', model: 'google/gemini-2.5-flash', guide: '<a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter API 키 발급</a> · 모델 이름과 요금/무료 표시를 확인하세요.' },
@@ -793,22 +647,22 @@
     $('#apiConnectionStatus').textContent = '';
     delete $('#apiConnectionStatus').dataset.result;
   }
-  async function getLiveHint(photoDataUrl, attemptText = '') {
+  async function getLiveHint(photoDataUrl, attemptText = '', recheck = false) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 95000);
     try {
       const response = await fetch('/api/tutor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, attemptText, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
+        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, attemptText, recheck, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
         signal: controller.signal
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `API 서버 오류 (${response.status})`);
       if (typeof result.hint !== 'string' || !result.hint.trim()) throw new Error('AI 힌트를 읽을 수 없어요.');
-      return { hint: result.hint.trim(), verdict: result.verdict === 'correct' ? 'correct' : result.verdict === 'incorrect' ? 'incorrect' : 'uncertain' };
+      return { hint: result.hint.trim(), problemFocus: typeof result.problemFocus === 'string' ? result.problemFocus.slice(0,140) : '', verdict: result.verdict === 'correct' ? 'correct' : result.verdict === 'incorrect' ? 'incorrect' : 'uncertain' };
     } finally { clearTimeout(timeout); }
   }
-  async function sendMessage(text, { fromHintButton = false } = {}) {
+  async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
     if (state.busy) return;
     const typed = (text || '').trim().slice(0, 1600);
     if (voice.listening) stopListening();
@@ -822,30 +676,20 @@
       updateRecord({ question: typed });
       state.active.question = typed;
     }
-    const photoOnly = state.mode === 'demo' && !!uploadedImage && !typed;
     state.hintLevel += 1;
-    const studentText = fromHintButton ? '힌트를 하나 더 주세요.' : typed;
+    const studentText = fromRecheck ? '처음 문제의 숫자와 조건, 무엇을 구하는지를 다시 확인하고 앞의 힌트를 고쳐 주세요.' : fromHintButton ? '힌트를 하나 더 주세요.' : typed;
     state.messages.push({ role: 'user', content: studentText || '첨부한 사진 속 문제를 풀기 위한 힌트를 주세요.' });
-    addMessage('student', fromHintButton ? '힌트 더 주세요! 💡' : typed, { photo: !!uploadedImage });
+    addMessage('student', fromRecheck ? '문제를 다시 읽어 주세요! 🔎' : fromHintButton ? '힌트 더 주세요! 💡' : typed, { photo: !!uploadedImage });
     $('#messageInput').value = '';
     clearPhoto();
     state.busy = true;
     updateProgress();
     const pending = addMessage('teacher', '', { loading: true });
     try {
-      const attemptText = !isNew && !fromHintButton && typed ? typed : '';
-      let reply;
-      if (state.mode === 'demo') {
-        const verdict = attemptText ? checkDemoMathAnswer(state.active.question, attemptText) : null;
-        reply = { hint: verdict === 'correct'
-          ? '정답이에요! 🎉 스스로 생각해서 맞혔어요. 정말 잘했어요!'
-          : `${verdict === 'incorrect' ? '좋은 시도예요! 🌷 다시 확인해 볼까요? ' : ''}${mockTutor(state.active.question, typed || (fromHintButton ? '힌트 더 주세요' : ''), state.hintLevel, photoOnly)}`,
-          verdict: verdict || 'uncertain' };
-      } else {
-        reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText);
-      }
+      const attemptText = !isNew && !fromHintButton && !fromRecheck && typed ? typed : '';
+      const reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText, fromRecheck);
       pending.remove();
-      addMessage('teacher', reply.hint);
+      addMessage('teacher', reply.hint, { focus: reply.problemFocus });
       if (voice.autoRead) speakTeacher(reply.hint);
       state.messages.push({ role: 'assistant', content: reply.hint });
       if (reply.verdict === 'correct') {
@@ -861,7 +705,14 @@
       pending.remove();
       state.hintLevel = Math.max(0, state.hintLevel - 1);
       state.messages.pop();
-      addMessage('teacher', 'AI 연결을 확인하고 있어요. 잠시 후 다시 시도하거나 AI 설정의 서버 연결 상태를 확인해 주세요. 🌷');
+      if (isNew) {
+        const failedId = state.active?.id;
+        state.records = state.records.filter(r => r.id !== failedId);
+        saveRecords();
+        state.active = null; state.messages = []; state.hintLevel = 0;
+        if (typed) $('#messageInput').value = typed;
+      }
+      addMessage('teacher', '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 연결 상태나 문제 원문을 확인한 뒤 다시 시도해 주세요.');
       showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
     } finally {
       state.busy = false;
@@ -929,10 +780,10 @@
     (id === 'settingsModal' ? $('#settingsBtn') : id === 'voiceModal' ? $('#openVoiceSettingsBtn') : $('#parentBtn')).focus();
   }
   function updateMode() {
-    const onlineAI = state.mode !== 'demo';
+    const onlineAI = true;
     $('#modeBadge').classList.toggle('live', onlineAI);
-    $('#modeBadge').lastChild.textContent = state.mode === 'live' ? ` ${PROVIDER_SETTINGS[state.provider]?.label || '외부 API'}` : ' 데모 모드';
-    $('#photoNote').textContent = onlineAI ? '사진은 선택한 외부 AI 서비스에 질문할 때만 전송돼요.' : '데모에서는 사진을 읽지 못해요.';
+    $('#modeBadge').lastChild.textContent = ` ${PROVIDER_SETTINGS[state.provider]?.label || 'AI 분석'}`;
+    $('#photoNote').textContent = '사진은 선택한 외부 AI 서비스에 문제를 분석·검토할 때 전송돼요.';
   }
   function saveSettings() {
     if (state.busy) { $('#settingStatus').textContent = '응답이 끝난 뒤 설정을 바꿀 수 있어요.'; return; }
@@ -953,7 +804,7 @@
     state.baseUrl = baseUrl;
     savePreferences();
     updateMode(); closeModal('settingsModal');
-    showToast(mode === 'live' ? `${PROVIDER_SETTINGS[provider].label}을 선택했어요. 서버 키는 Render에서 관리해요. 연결 시험으로 확인해 주세요.` : '데모 모드로 연습해요!');
+    showToast(`${PROVIDER_SETTINGS[provider].label}을 선택했어요. AI 문제 분석과 힌트 검토를 진행해요.`);
   }
   async function testApiConnection() {
     const status = $('#apiConnectionStatus');
@@ -1035,6 +886,7 @@
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage($('#messageInput').value); }
   });
   $('#moreHintBtn').addEventListener('click', () => sendMessage('힌트를 하나 더 주세요.', { fromHintButton: true }));
+  $('#recheckProblemBtn').addEventListener('click', () => sendMessage('문제를 다시 읽어 주세요.', { fromRecheck: true }));
   $('#understoodBtn').addEventListener('click', markUnderstood);
   $('#newProblemBtn').addEventListener('click', () => { if (!state.busy) { resetConversation(); $('#messageInput').focus(); } });
   $('#photoInput').addEventListener('change', (event) => prepareImage(event.target.files?.[0]));

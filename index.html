@@ -99,6 +99,7 @@
             </div>
             <div class="hint-actions">
               <button id="moreHintBtn" class="assist-button hint-more" type="button" disabled>💡 힌트 더 주세요</button>
+              <button id="recheckProblemBtn" class="assist-button hint-recheck" type="button" disabled>🔎 문제 다시 읽기</button>
               <button id="understoodBtn" class="assist-button understood" type="button" disabled>🌟 이해했어요!</button>
             </div>
           </div>
@@ -133,12 +134,9 @@
   <div class="modal-backdrop" id="settingsModal" hidden>
     <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="modal-header"><div><span class="modal-eyebrow">선생님 연결하기</span><h2 id="settingsTitle">⚙ AI 설정</h2></div><button type="button" class="close-modal" data-close="settingsModal" aria-label="닫기">×</button></div>
-      <p class="modal-description">Google Gemini 등 서버에 등록한 AI를 사용할 수 있어요. API 키는 앱이 아닌 Render 서버에서 안전하게 관리합니다. 선생님 목소리는 별도 설정에서 변경할 수 있어요.</p>
-      <fieldset class="mode-options"><legend>사용할 모드를 선택해요</legend>
-        <label class="radio-card"><input type="radio" name="mode" value="demo" /><span><strong>🧸 데모 모드</strong><small>API 키 없이 예시 힌트 체험</small></span></label>
-        <label class="radio-card"><input type="radio" name="mode" value="live" checked /><span><strong>🌐 외부 AI API 연결</strong><small>Gemini · Claude · OpenRouter · Groq 등 선택</small></span></label>
-      </fieldset>
-      <div class="api-provider-fields" id="apiProviderFields" hidden>
+      <p class="modal-description">문제 전체를 AI가 분석하고 힌트를 한 번 더 검토해요. API 키는 Render 서버에서만 관리하며, 선생님 목소리는 별도 설정에서 변경할 수 있어요.</p>
+      <input type="radio" name="mode" value="live" checked hidden />
+      <div class="api-provider-fields" id="apiProviderFields">
         <label class="field-label" for="apiProviderSelect">① API 제공업체</label>
         <select id="apiProviderSelect" class="provider-select">
           <option value="gemini">Google Gemini (Google AI Studio)</option>
@@ -154,7 +152,7 @@
         </select>
         <p class="provider-guide" id="providerGuide"></p>
         <label class="field-label" for="apiModelInput">② AI 모델 이름 <span>(각 서비스가 제공하는 모델로 변경 가능)</span></label>
-        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.5-flash-lite" />
+        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.8-flash" />
         <div id="customApiRow" hidden><label class="field-label" for="apiBaseUrlInput">사용자 지정 기본 URL (HTTPS)</label><input class="key-input model-input" id="apiBaseUrlInput" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/v1" /><p class="setting-help">OpenAI 호환 Chat Completions API의 기본 주소를 입력하세요. /chat/completions는 자동으로 붙어요.</p></div>
         <div class="setting-help" id="serverKeyStatus" role="status" aria-live="polite">서버에 등록된 API 키 상태를 확인하고 있어요…</div>
         <p class="setting-help">🔒 API 키는 이 앱에 입력하지 않습니다. Render → Environment에 등록된 키를 서버가 직접 사용합니다. 키 내용은 휴대폰으로 전달하지 않아요.</p>

@@ -1,9 +1,15 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
-  "description": "초등학생 소크라테스식 AI 홈 과외 웹앱",
-  "scripts": { "start": "node server.mjs", "check": "node --check app.js && node --check server.mjs" },
-  "engines": { "node": ">=20" }
+  "description": "AI-first, independently reviewed Socratic tutor (PWA)",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs",
+    "test": "node --test tutor-engine.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

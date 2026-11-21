@@ -1,5 +1,5 @@
-/* 생각별 v11: Cache UI files only. Never cache API traffic or keys. */
-const CACHE = 'saenggakbyeol-shell-v11-20261121';
+/* 생각별 v12: Cache UI files only. Never cache API traffic or keys. */
+const CACHE = 'saenggakbyeol-shell-v13-20261121';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-192.png', '/icon-maskable-512.png', '/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
