@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runTutorFlow, TutorEngineError, TUTOR_ENGINE_VERSION } from './tutor-engine.mjs';
+import { runTutorFlow, runAnswerRevealFlow, TutorEngineError, TUTOR_ENGINE_VERSION } from './tutor-engine.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -47,6 +47,95 @@ function sessionCookie(req) {
 }
 
 const HINT_ENGINE_VERSION = TUTOR_ENGINE_VERSION;
+const REQUIRED_HINTS = 5;
+// Per-problem successes: the browser cannot unlock answers by faking a hint counter.
+// Data stays in server memory and resets if Render starts a new instance.
+const hintProgress = new Map();
+const pinFailures = new Map();
+function progressDigest(body) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    problem: String(body.problem || '').slice(0, 1600),
+    grade: body.grade, subject: body.subject,
+    image: body.imageDataUrl ? crypto.createHash('sha256').update(body.imageDataUrl).digest('hex') : ''
+  })).digest('hex');
+}
+function getTrackedProblem(body) {
+  const id = typeof body.problemId === 'string' ? body.problemId : '';
+  if (!/^[a-zA-Z0-9_-]{12,90}$/.test(id)) return null;
+  const saved = hintProgress.get(id);
+  const digest = progressDigest(body);
+  if (saved && saved.digest !== digest) return null;
+  if (!saved) {
+    if (hintProgress.size > 1500) {
+      for (const [key, item] of hintProgress) {
+        if (Date.now() - item.lastAt > 24 * 3600000) hintProgress.delete(key);
+      }
+      if (hintProgress.size > 1500) hintProgress.clear();
+    }
+    const item = { digest, hints: 0, lastAt: Date.now() };
+    hintProgress.set(id, item);
+    return item;
+  }
+  saved.lastAt = Date.now();
+  return saved;
+}
+// The changed answer-viewing PIN is kept as a sealed, HttpOnly, same-site cookie
+// on each guardian's device. Render free hosts have no persistent disk.
+// The default on a new browser is intentionally 0000 as requested.
+const ANSWER_COOKIE = 'sb_answer_pin';
+const answerCookieKey = crypto.createHash('sha256').update('saenggakbyeol-answer-pin-v14|' +
+  (process.env.ANSWER_PIN_SECRET || APP_ACCESS_PIN || process.env.GEMINI_API_KEY || SESSION_TOKEN)).digest();
+function cookieValue(req, name) {
+  const entry = String(req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith(name + '='));
+  return entry ? entry.slice(name.length + 1) : '';
+}
+function readAnswerPin(req) {
+  const raw = cookieValue(req, ANSWER_COOKIE);
+  if (!raw) return null;
+  try {
+    const buf = Buffer.from(raw, 'base64url');
+    const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), ciphertext = buf.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', answerCookieKey, iv);
+    decipher.setAuthTag(tag);
+    const data = JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8'));
+    if (data.v !== 1 || !/^[0-9a-f]{32}$/.test(data.salt) || !/^[0-9a-f]{64}$/.test(data.hash)) throw Error('invalid');
+    return data;
+  } catch (_) { throw new TutorEngineError('이 기기의 정답 비밀번호 정보를 읽지 못했어요. 관리자에게 문의해 주세요.', 400); }
+}
+function pinMatches(req, pin) {
+  if (typeof pin !== 'string' || !/^\d{4,12}$/.test(pin)) return false;
+  const record = readAnswerPin(req);
+  if (!record) return constantEquals(pin, '0000');
+  const candidate = crypto.scryptSync(pin, Buffer.from(record.salt, 'hex'), 32);
+  return crypto.timingSafeEqual(candidate, Buffer.from(record.hash, 'hex'));
+}
+function sealAnswerPin(pin) {
+  const salt = crypto.randomBytes(16);
+  const record = { v:1, salt:salt.toString('hex'), hash:crypto.scryptSync(pin, salt, 32).toString('hex') };
+  const iv=crypto.randomBytes(12);
+  const cipher=crypto.createCipheriv('aes-256-gcm', answerCookieKey, iv);
+  const encrypted=Buffer.concat([cipher.update(JSON.stringify(record)), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
+}
+function putAnswerCookie(req, res, pin) {
+  const secure=req.socket.encrypted || (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https');
+  res.setHeader('Set-Cookie', `${ANSWER_COOKIE}=${sealAnswerPin(pin)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000${secure ? '; Secure' : ''}`);
+}
+function tooManyPinAttempts(req) {
+  const k = String(req.socket.remoteAddress || 'unknown');
+  const r = pinFailures.get(k);
+  return !!(r && r.until > Date.now());
+}
+function markWrongPin(req) {
+  const k = String(req.socket.remoteAddress || 'unknown');
+  const row = pinFailures.get(k) || {count:0, until:0};
+  row.count++;
+  if (row.count >= 5) { row.until = Date.now() + 10 * 60000; row.count=0; }
+  pinFailures.set(k,row);
+  if (pinFailures.size > 500) pinFailures.clear();
+}
+function clearPinFailures(req) { pinFailures.delete(String(req.socket.remoteAddress || 'unknown')); }
+
 // v13: No keyword-driven hint engine; the model reads the original problem,
 // proposes a hint, and a separate model call verifies semantic fidelity.
 
@@ -136,13 +225,13 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
     body = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: 'user', parts: [{ text: humanPayload }, ...(image ? [{ inline_data: { mime_type: image.mime, data: image.data } }] : [])] }],
-      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 2000, temperature: stage === 'review' ? 0.1 : 0.35 },
+      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 2000, temperature: stage.endsWith('review') ? 0.1 : stage === 'answer-draft' ? 0.2 : 0.35 },
     };
   } else if (details.kind === 'anthropic') {
     endpoint = 'https://api.anthropic.com/v1/messages';
     headers = { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' };
     body = {
-      model, system: instructions, max_tokens: 2000, temperature: stage === 'review' ? 0.1 : 0.35,
+      model, system: instructions, max_tokens: 2000, temperature: stage.endsWith('review') ? 0.1 : stage === 'answer-draft' ? 0.2 : 0.35,
       messages: [{role:'user', content: image
         ? [{type:'text', text:humanPayload},{type:'image', source:{type:'base64', media_type:image.mime, data:image.data}}]
         : humanPayload}]
@@ -154,7 +243,7 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
     headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
     if (provider === 'openrouter') headers['HTTP-Referer'] = 'https://saenggakbyeol.local';
     body = {
-      model, max_tokens: 2000, temperature: stage === 'review' ? 0.1 : 0.35,
+      model, max_tokens: 2000, temperature: stage.endsWith('review') ? 0.1 : stage === 'answer-draft' ? 0.2 : 0.35,
       messages: [
         { role:'system', content:instructions },
         { role:'user', content: image
@@ -212,10 +301,16 @@ async function tutor(req, res) {
   const key = process.env[details.env]?.trim() || '';
   if (!key || key.length > 1000) return json(res, 400, { error:`${details.name} API 키가 서버에 없어요. Render → Environment에서 ${details.env}를 등록해 주세요.` });
   try {
-    const answer = await runTutorFlow({ ...body, hasPhoto: Boolean(image) }, async params =>
+    const progress = getTrackedProblem(body);
+    if (body.problemId && !progress) return json(res, 409, {error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'});
+    // Hint numbers are computed on the SERVER, not trusted from the client.
+    const hintLevel = progress ? progress.hints + 1 : 1;
+    const answer = await runTutorFlow({ ...body, hintLevel, hasPhoto: Boolean(image) }, async params =>
       requestTutorModel({ ...params, provider, model, key, baseUrl:body.baseUrl, imageDataUrl:image })
     );
-    return json(res, 200, { ...answer, source:`${provider}-reviewed`, model, engine:HINT_ENGINE_VERSION });
+    if (progress && answer.verdict !== 'correct') progress.hints++;
+    return json(res, 200, { ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
+      source:`${provider}-reviewed`, model, engine:HINT_ENGINE_VERSION });
   } catch (error) {
     if (error instanceof TutorEngineError) return json(res, error.status, { error:error.message });
     return json(res, 502, { error:'AI가 문제를 검토하는 과정에서 오류가 생겼어요. 다시 시도해 주세요.' });
@@ -335,6 +430,51 @@ const server = http.createServer(async (req, res) => {
     }]));
     // Never return any API key or secret value to the browser.
     return json(res, 200, { providers });
+  }
+  if (url.pathname === '/api/answer/config' && req.method === 'GET') {
+    try { return json(res, 200, {requiredHints:REQUIRED_HINTS, pinChanged:!!readAnswerPin(req), pinScope:'this-device'}); }
+    catch (e) { return json(res,e.status||400,{error:e.message}); }
+  }
+  if (url.pathname === '/api/answer/change-pin' && req.method === 'POST') {
+    if (!sameOrigin(req)) return json(res, 403, {error:'허용되지 않은 요청이에요.'});
+    if (tooManyPinAttempts(req)) return json(res, 429, {error:'입력 오류가 많아요. 10분 뒤 다시 시도해 주세요.'});
+    let body;
+    try { body=JSON.parse(await readBody(req)); } catch (_) { return json(res,400,{error:'입력을 확인해 주세요.'}); }
+    if (typeof body?.newPin !== 'string' || !/^\d{4,12}$/.test(body.newPin)) return json(res,400,{error:'새 비밀번호는 숫자 4~12자리로 입력해 주세요.'});
+    if (body.newPin === '0000') return json(res,400,{error:'새 비밀번호는 초기 비밀번호 0000과 다르게 정해 주세요.'});
+    try {
+      if (!pinMatches(req,body.oldPin)) { markWrongPin(req); return json(res,403,{error:'현재 비밀번호가 일치하지 않아요.'}); }
+      putAnswerCookie(req,res,body.newPin);
+      clearPinFailures(req);
+      return json(res,200,{ok:true,pinChanged:true,pinScope:'this-device'});
+    } catch (e) { return json(res,e.status||400,{error:e.message}); }
+  }
+  if (url.pathname === '/api/answer/reveal' && req.method === 'POST') {
+    if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 요청이에요.'});
+    let body;
+    try { body=JSON.parse(await readBody(req)); } catch (_) { return json(res,400,{error:'입력 정보를 확인해 주세요.'}); }
+    const id = typeof body.problemId === 'string' ? body.problemId : '';
+    const tracked = hintProgress.get(id);
+    if (!tracked || tracked.digest !== progressDigest(body) || tracked.hints < REQUIRED_HINTS)
+      return json(res,403,{error:`같은 문제에서 힌트를 ${REQUIRED_HINTS}번 받은 뒤 정답을 볼 수 있어요.`,hintCount:tracked?.hints||0});
+    if (tooManyPinAttempts(req)) return json(res,429,{error:'비밀번호 오류가 많아요. 10분 뒤 다시 시도해 주세요.'});
+    try {
+      if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'정답 보기 비밀번호가 일치하지 않아요.'}); }
+    } catch (e) { return json(res,e.status||400,{error:e.message}); }
+    clearPinFailures(req);
+    const provider=body.provider || 'gemini', details=API_PROVIDERS[provider];
+    if (!details) return json(res,400,{error:'AI 제공업체를 확인해 주세요.'});
+    const model=typeof body.model==='string' && body.model ? body.model : details.model;
+    if (!safeProviderModel(model)) return json(res,400,{error:'모델 이름을 확인해 주세요.'});
+    const key=process.env[details.env]?.trim() || '';
+    if (!key) return json(res,400,{error:'Render에 해당 AI 서비스 키가 등록되지 않았어요.'});
+    const photo=body.imageDataUrl;
+    if (photo && (typeof photo !== 'string' || photo.length>4*1024*1024 || !imageParts(photo))) return json(res,400,{error:'문제 사진을 다시 확인해 주세요.'});
+    try {
+      const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo},
+        params=>requestTutorModel({...params,provider,model,key,baseUrl:body.baseUrl,imageDataUrl:photo}));
+      return json(res,200,{...result,requiredHints:REQUIRED_HINTS});
+    } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
   }
   if (url.pathname === '/api/tts') {
     if (req.method !== 'POST') return json(res, 405, { error: 'POST만 지원해요.' });

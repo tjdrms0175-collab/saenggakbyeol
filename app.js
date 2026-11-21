@@ -93,7 +93,7 @@
   })();
   const state = {
     grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.8-flash', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
-    active: null, hintLevel: 0, photo: null, busy: false,
+    active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
 
@@ -505,6 +505,11 @@
     stars.setAttribute('aria-label', `지금까지 힌트 ${state.hintLevel}회, 횟수 제한 없음`);
     $('#progressCounter').textContent = `${state.hintLevel}회 · 무제한`;
     $('#moreHintBtn').disabled = !state.active || state.busy;
+    const canReveal=Boolean(state.active && state.hintLevel >= 5 && !state.busy && !state.answerShown);
+    const reveal=$('#revealAnswerBtn');
+    reveal.disabled=!canReveal;
+    reveal.classList.toggle('is-unlocked',canReveal);
+    reveal.textContent=state.answerShown ? '✅ 정답 확인 완료' : canReveal ? '🔓 정답 보기 (비밀번호 필요)' : `🔒 정답 보기 (${Math.min(state.hintLevel,5)}/5)`;
     $('#recheckProblemBtn').disabled = !state.active || state.busy;
     $('#understoodBtn').disabled = !state.active || state.busy;
     $('#sendBtn').disabled = state.busy;
@@ -521,6 +526,7 @@
     state.active = null;
     state.messages = [];
     state.hintLevel = 0;
+    state.answerShown = false;
     clearPhoto();
     $('#messageInput').value = '';
     $('#chatBody').replaceChildren($('#welcomeCard'));
@@ -590,8 +596,9 @@
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     state.active = { id, question, hadPhoto: photo, photoDataUrl: null };
     state.hintLevel = 0;
+    state.answerShown = false;
     state.messages = [];
-    state.records.push({ id, day: nowDay(), time: new Date().toISOString(), grade: state.grade, subject: state.subject, question: question || '사진으로 올린 문제', hints: 0, understood: false, solved: false });
+    state.records.push({ id, day: nowDay(), time: new Date().toISOString(), grade: state.grade, subject: state.subject, question: question || '사진으로 올린 문제', hints: 0, understood: false, solved: false, revealed: false });
     saveRecords();
   }
   function updateRecord(changes) {
@@ -653,13 +660,13 @@
     try {
       const response = await fetch('/api/tutor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, attemptText, recheck, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
+        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, problemId: state.active?.id || '', attemptText, recheck, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
         signal: controller.signal
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `API 서버 오류 (${response.status})`);
       if (typeof result.hint !== 'string' || !result.hint.trim()) throw new Error('AI 힌트를 읽을 수 없어요.');
-      return { hint: result.hint.trim(), problemFocus: typeof result.problemFocus === 'string' ? result.problemFocus.slice(0,140) : '', verdict: result.verdict === 'correct' ? 'correct' : result.verdict === 'incorrect' ? 'incorrect' : 'uncertain' };
+      return { hint: result.hint.trim(), problemFocus: typeof result.problemFocus === 'string' ? result.problemFocus.slice(0,140) : '', verdict: result.verdict === 'correct' ? 'correct' : result.verdict === 'incorrect' ? 'incorrect' : 'uncertain', hintCount: Number.isInteger(result.hintCount) ? result.hintCount : state.hintLevel };
     } finally { clearTimeout(timeout); }
   }
   async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
@@ -688,18 +695,18 @@
     try {
       const attemptText = !isNew && !fromHintButton && !fromRecheck && typed ? typed : '';
       const reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText, fromRecheck);
+      state.hintLevel = reply.hintCount;
       pending.remove();
       addMessage('teacher', reply.hint, { focus: reply.problemFocus });
       if (voice.autoRead) speakTeacher(reply.hint);
       state.messages.push({ role: 'assistant', content: reply.hint });
       if (reply.verdict === 'correct') {
-        state.hintLevel = Math.max(0, state.hintLevel - 1); // checking an answer isn't another hint
         updateRecord({ solved: true });
         state.active = null;
         state.messages = [];
         showToast('🎉 스스로 문제를 맞혔어요! 새로운 문제도 풀어 볼까요?');
       } else {
-        updateRecord({ hints: (state.records.find((r) => r.id === state.active.id)?.hints || 0) + 1 });
+        updateRecord({ hints: state.hintLevel });
       }
     } catch (error) {
       pending.remove();
@@ -770,14 +777,22 @@
       $('#apiBaseUrlInput').value = state.baseUrl;
       syncProviderFields();
       $('#settingStatus').textContent = '';
+      $('#oldAnswerPin').value = '';
+      $('#newAnswerPin').value = '';
+      $('#newAnswerPinConfirm').value = '';
+      $('#changeAnswerPinStatus').textContent = '';
+      refreshAnswerPinStatus();
+    } else if (id === 'answerModal') {
+      $('#revealPinInput').value = '';
+      $('#revealAnswerStatus').textContent = '';
     } else if (id === 'parentModal') renderReport();
     document.body.style.overflow = 'hidden';
-    modal.querySelector('.close-modal').focus();
+    (id === 'answerModal' ? $('#revealPinInput') : modal.querySelector('.close-modal')).focus();
   }
   function closeModal(id) {
     $(`#${id}`).hidden = true;
     document.body.style.overflow = '';
-    (id === 'settingsModal' ? $('#settingsBtn') : id === 'voiceModal' ? $('#openVoiceSettingsBtn') : $('#parentBtn')).focus();
+    (id === 'settingsModal' ? $('#settingsBtn') : id === 'voiceModal' ? $('#openVoiceSettingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus();
   }
   function updateMode() {
     const onlineAI = true;
@@ -846,6 +861,59 @@
     }
   }
 
+  async function refreshAnswerPinStatus() {
+    try {
+      const response=await fetch('/api/answer/config',{cache:'no-store'});
+      const data=await response.json();
+      if (!response.ok) throw Error(data.error || '설정을 불러오지 못했어요.');
+      $('#answerPinScope').textContent=data.pinChanged
+        ? '✅ 이 기기에서 변경한 비밀번호가 적용되어 있어요. 브라우저 데이터 삭제 시 초기 비밀번호로 돌아갈 수 있어요.'
+        : '⚠️ 초기 비밀번호는 0000이에요. 다른 사람이 추측하기 쉬우므로 꼭 변경해 주세요. 비밀번호는 이 기기에만 적용돼요.';
+    } catch (_) { $('#answerPinScope').textContent='정답 비밀번호 상태를 불러오지 못했어요.'; }
+  }
+  async function changeAnswerPin() {
+    const button=$('#changeAnswerPinBtn'), status=$('#changeAnswerPinStatus');
+    const oldPin=$('#oldAnswerPin').value.trim();
+    const newPin=$('#newAnswerPin').value.trim();
+    const checkPin=$('#newAnswerPinConfirm').value.trim();
+    if (!/^\d{4,12}$/.test(newPin) || newPin==='0000') { status.textContent='새 비밀번호는 0000이 아닌 숫자 4~12자리로 입력해 주세요.'; return; }
+    if (newPin!==checkPin) { status.textContent='새 비밀번호 두 개가 서로 달라요.'; return; }
+    button.disabled=true; status.textContent='변경하고 있어요…';
+    try {
+      const response=await fetch('/api/answer/change-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPin,newPin})});
+      const data=await response.json();
+      if (!response.ok) throw Error(data.error || '변경에 실패했어요.');
+      status.textContent='✅ 새 비밀번호로 변경했어요. 이 기기에만 적용됩니다.';
+      $('#oldAnswerPin').value='';$('#newAnswerPin').value='';$('#newAnswerPinConfirm').value='';
+      refreshAnswerPinStatus();
+    } catch (error) { status.textContent=`❌ ${error.message}`; }
+    finally { button.disabled=false; }
+  }
+  async function revealAnswer() {
+    if (!state.active || state.hintLevel<5 || state.answerShown || state.busy) return;
+    const pin=$('#revealPinInput').value.trim(),status=$('#revealAnswerStatus'),button=$('#confirmRevealAnswerBtn');
+    if (!/^\d{4,12}$/.test(pin)) { status.textContent='숫자 4~12자리 비밀번호를 입력해 주세요.'; return; }
+    state.busy=true;button.disabled=true;status.textContent='🔎 AI가 정답을 두 번 확인하고 있어요…';updateProgress();
+    try {
+      const body={pin,problemId:state.active.id,problem:state.active.question,grade:state.grade,subject:state.subject,
+        provider:state.provider,model:state.model,baseUrl:state.provider==='custom'?state.baseUrl:'',imageDataUrl:state.active.photoDataUrl};
+      const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),110000);
+      let response,data;
+      try { response=await fetch('/api/answer/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal}); data=await response.json().catch(()=>({})); }
+      finally { clearTimeout(timeout); }
+      if (!response.ok) throw Error(data.error || `서버 오류 (${response.status})`);
+      if (typeof data.answer!=='string' || !data.answer.trim()) throw Error('AI 정답을 확인하지 못했어요.');
+      const msg=`🔐 학부모 확인 후 공개한 정답: ${data.answer.trim()}${data.explanation?'\n\n풀이 설명: '+data.explanation:''}`;
+      addMessage('teacher',msg);
+      if (voice.autoRead) speakTeacher(msg);
+      state.messages.push({role:'assistant',content:'보호자 확인 후 정답이 공개됐어요.'});
+      state.answerShown=true;
+      updateRecord({revealed:true});
+      $('#revealPinInput').value='';
+      closeModal('answerModal');showToast('🔐 보호자 확인 후 정답을 공개했어요.');
+    } catch(error) { status.textContent=error.name==='AbortError'?'정답 확인 요청이 너무 오래 걸렸어요. 다시 시도해 주세요.':`❌ ${error.message}`; }
+    finally {state.busy=false;button.disabled=false;updateProgress();}
+  }
   function renderReport() {
     const todayRecords = state.records.filter((r) => r.day === nowDay());
     $('#reportDate').textContent = `${new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })} · 이 기기에서 공부한 내용`;
@@ -867,7 +935,7 @@
       const date = document.createElement('span');
       date.textContent = `${record.grade} · ${SUBJECT_EMOJI[record.subject] || '📚'} ${record.subject} · ${new Date(record.time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · 힌트 ${record.hints}회`;
       const status = document.createElement('strong');
-      status.textContent = record.solved ? '✅ 정답 확인' : record.understood ? '🌟 이해 표시' : '💭 생각 중';
+      status.textContent = record.solved ? '✅ 스스로 정답' : record.revealed ? '🔓 보호자 정답 열람' : record.understood ? '🌟 이해 표시' : '💭 생각 중';
       status.className = record.solved || record.understood ? 'self-reported' : 'pending';
       top.append(date, status);
       const q = document.createElement('p');
@@ -886,6 +954,10 @@
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage($('#messageInput').value); }
   });
   $('#moreHintBtn').addEventListener('click', () => sendMessage('힌트를 하나 더 주세요.', { fromHintButton: true }));
+  $('#revealAnswerBtn').addEventListener('click',()=>{if (state.active && state.hintLevel>=5 && !state.busy && !state.answerShown) openModal('answerModal');});
+  $('#confirmRevealAnswerBtn').addEventListener('click',revealAnswer);
+  $('#revealPinInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();revealAnswer();}});
+  $('#changeAnswerPinBtn').addEventListener('click',changeAnswerPin);
   $('#recheckProblemBtn').addEventListener('click', () => sendMessage('문제를 다시 읽어 주세요.', { fromRecheck: true }));
   $('#understoodBtn').addEventListener('click', markUnderstood);
   $('#newProblemBtn').addEventListener('click', () => { if (!state.busy) { resetConversation(); $('#messageInput').focus(); } });
