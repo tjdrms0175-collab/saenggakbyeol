@@ -5,12 +5,6 @@
 @media(max-width:385px){.top-actions{gap:4px}.mode-badge{font-size:10px}.header-button{padding:0 8px}.grade-chip{font-size:12px}.chat-heading p{font-size:10px}.new-question{font-size:11px;padding:9px}.hint-progress .star-track{font-size:17px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 
-/* Free local Ollama mode controls */
-.local-guide{border:1px solid #dcf0eb;background:#f4fcf9;border-radius:16px;padding:16px;margin:0 0 19px;color:#496c63}
-.local-guide>strong{font-size:13px}.local-guide p{font-size:12px;line-height:1.85;margin:9px 0;color:#648079}
-.local-guide code{padding:2px 5px;border-radius:5px;color:#5b5094;background:#eeeaff;font-size:11px;overflow-wrap:anywhere}
-.local-guide a{color:#6a5bc6;text-decoration:underline;text-underline-offset:2px}
-.local-status{font-size:12px;line-height:1.7;color:#3f776c;margin:7px 0}
 .recheck-button{font-size:12px;border-radius:9px;padding:8px 11px;background:#ddf5ed;color:#3e786b;font-weight:800}
 .recheck-button:hover{background:#c3ecdb}
 

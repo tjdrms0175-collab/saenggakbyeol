@@ -74,6 +74,7 @@
         $('#accessGate').hidden = true;
         document.body.style.overflow = '';
         showToast('생각별에 오신 것을 환영해요! 🌷');
+        refreshApiServerStatus();
       } catch (_) { error.textContent = '서버에 연결되지 않았어요. 네트워크를 확인해 주세요.'; }
     });
   }
@@ -91,7 +92,7 @@
     catch (_) { return {}; }
   })();
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: ['demo','local','live'].includes(savedPreferences.mode) ? savedPreferences.mode : 'demo', apiKey: '', provider: /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: savedPreferences.modeVersion === 11 && savedPreferences.mode === 'demo' ? 'demo' : 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -104,14 +105,14 @@
     autoRead: savedPreferences.autoRead !== false, recognition: null, listening: false, baseText: '',
     finalText: '', heardAnything: false, error: '',
     utterance: null, speakingButton: null, completedText: '', currentInterim: '',
-    mode: savedPreferences.voiceMode === 'gemini' ? 'gemini' : 'browser', preferredVoice: typeof savedPreferences.preferredVoice === 'string' ? savedPreferences.preferredVoice : 'auto', geminiVoice: ['Zephyr','Callirrhoe','Aoede'].includes(savedPreferences.geminiVoice) ? savedPreferences.geminiVoice : 'Zephyr', ttsKey: '',
+    mode: savedPreferences.voiceMode === 'gemini' ? 'gemini' : 'browser', preferredVoice: typeof savedPreferences.preferredVoice === 'string' ? savedPreferences.preferredVoice : 'auto', geminiVoice: ['Zephyr','Callirrhoe','Aoede'].includes(savedPreferences.geminiVoice) ? savedPreferences.geminiVoice : 'Zephyr',
     availableVoices: [], audio: null, audioUrl: null, audioRequest: null, playToken: 0,
     startedAt: 0, lastSpeechAt: 0, silenceTimer: null, restartTimer: null, restartCount: 0
   };
   function savePreferences() {
     try {
       localStorage.setItem('thinkstar-prefs-v8', JSON.stringify({
-        grade: state.grade, subject: state.subject, mode: state.mode,
+        grade: state.grade, subject: state.subject, mode: state.mode, modeVersion: 11,
         provider: state.provider, model: state.model, baseUrl: state.baseUrl,
         autoRead: voice.autoRead, voiceMode: voice.mode,
         preferredVoice: voice.preferredVoice, geminiVoice: voice.geminiVoice,
@@ -234,9 +235,8 @@
     $('#browserVoiceRow').hidden = voice.mode !== 'browser';
     $('#teacherSpeechRateRow').hidden = voice.mode !== 'browser';
     $('#geminiVoiceRow').hidden = voice.mode !== 'gemini';
-    $('#ttsKeyRow').hidden = voice.mode !== 'gemini';
-    if (voice.mode === 'gemini') {
-      $('#teacherVoiceInfo').textContent = 'Gemini 3.8 Flash-Lite TTS는 별도 음성 생성 API입니다. 무료 구간이 없을 수 있으며 요금/사용량이 발생합니다. Gemini 모델 키 또는 아래 별도 키가 필요해요. 아이의 답변 문장이 Google로 전송됩니다.';
+        if (voice.mode === 'gemini') {
+      $('#teacherVoiceInfo').textContent = 'Gemini 3.8 Flash-Lite TTS는 별도 음성 생성 API입니다. 무료 구간이 없을 수 있으며 요금/사용량이 발생합니다. Gemini 키는 Render 서버의 환경변수 GEMINI_API_KEY에서만 관리해요. 아이의 답변 문장이 Google로 전송됩니다.';
     } else {
       refreshBrowserVoices();
     }
@@ -265,8 +265,7 @@
     catch (_) { finish(); showToast('음성을 재생하지 못했어요. 스피커를 확인해 주세요.'); }
   }
   async function geminiSpeak(message, button, token) {
-    const apiKey = voice.ttsKey.trim() || (state.provider === 'gemini' ? state.apiKey : '');
-    voice.speakingButton = button;
+        voice.speakingButton = button;
     updateReplayButtons();
     // When hosted, GEMINI_API_KEY can be configured securely on the backend.
     // The server returns a clear error when neither server nor session key exists.
@@ -276,7 +275,7 @@
     try {
       const response = await fetch('/api/tts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: message.slice(0, 550), apiKey, voiceName: voice.geminiVoice }),
+        body: JSON.stringify({ text: message.slice(0, 550), voiceName: voice.geminiVoice }),
         signal: controller.signal
       });
       if (!response.ok) {
@@ -429,7 +428,6 @@
     $('#teacherVoiceMode').addEventListener('change', (event) => setVoiceMode(event.target.value));
     $('#teacherVoiceSelect').addEventListener('change', (event) => { voice.preferredVoice = event.target.value; stopSpeaking(); savePreferences(); });
     $('#geminiVoiceSelect').addEventListener('change', (event) => { voice.geminiVoice = event.target.value; stopSpeaking(); savePreferences(); });
-    $('#geminiTtsKeyInput').addEventListener('input', (event) => { voice.ttsKey = event.target.value; });
     $('#voicePreviewBtn').addEventListener('click', () => speakTeacher('안녕하세요! 저는 생각별 선생님이에요. 우리 오늘도 천천히, 즐겁게 공부해 볼까요?', null));
     $('#voiceStopBtn').addEventListener('click', stopSpeaking);
     $('#speechRateSelect').addEventListener('change', () => { stopSpeaking(); savePreferences(); });
@@ -607,6 +605,25 @@
   }
   function mockTutor(question, latestInput, level, photoOnly) {
     if (photoOnly) return '사진을 올려 주었네요! 📷 데모에서는 사진 속 글자를 읽을 수 없어요. 문제에 보이는 숫자나 문장 하나만 적어 줄래요?';
+    // Do not mistake "sum scores and divide" for distributing objects to people.
+    if (state.subject === '수학' && /점수|평균|고른\s*점수/.test(question)) {
+      const scores = [...question.matchAll(/(\d{1,4}(?:\.\d+)?)\s*점(?!수)/g)].map(m => m[1]);
+      if (scores.length >= 2 && /평균|고른\s*점수|같은\s*점수|합친\s*뒤|모두\s*합|나누|나눠/.test(question)) {
+        const divisor = /(?:어떤|무슨)\s*(?:수|숫자|값)(?:로|으로)\s*나누/.test(question);
+        const hints = divisor ? [
+          `${scores.map(n=>n+'점').join(', ')}은 각각 한 과목의 점수예요. 모두 더한 점수를 고르게 나누려면 점수 칸이 몇 개인지 세어 볼까요? 🌟`,
+          '과목 이름마다 동그라미 하나씩 그려 보세요. 동그라미가 몇 개인가요?',
+          '총점을 과목마다 공평하게 나눈다고 생각해요. 나눌 칸은 몇 개가 필요할까요?',
+          '나누는 수는 점수의 크기가 아니라 과목 수예요. 과목 이름을 하나씩 세어 볼까요?'
+        ] : [
+          `${scores.map(n=>n+'점').join(', ')}을 모두 더한 다음 점수의 개수로 나누는 것이 평균이에요. 먼저 어떤 덧셈식을 쓸까요?`,
+          '과목이 몇 개인지 먼저 세어 볼까요?',
+          '총점을 점수의 개수로 나누려면 어떤 식을 쓰면 좋을까요?',
+          '평균이 가장 작은 점수와 가장 큰 점수 사이에 있는지 확인해 볼까요?'
+        ];
+        return hints[(Math.max(1, level)-1)%hints.length];
+      }
+    }
     if (state.subject === '수학' && /(\d+)\s*분/.test(question) && /시간/.test(question)) {
       const minutes = question.match(/(\d+)\s*분/)[1];
       const details = [
@@ -707,6 +724,15 @@
   function checkDemoMathAnswer(question, answer) {
     if (state.subject !== '수학' || !/^(?:답은|정답은)?\s*\d/.test(answer.trim())) return null;
     const normalized = answer.trim().replace(/\s+/g, '');
+    const scoreNums = [...question.matchAll(/(\d{1,4}(?:\.\d+)?)\s*점(?!수)/g)].map(m=>Number(m[1]));
+    if (scoreNums.length >= 2 && /점수|평균|고른\s*점수/.test(question) &&
+        /평균|고른\s*점수|같은\s*점수|합친\s*뒤|모두\s*합|나누|나눠/.test(question)) {
+      const candidate = normalized.match(/^(?:답은|정답은)?(-?\d+(?:\.\d+)?)(?:점|개|과목|으로(?:나눠요|나눕니다|요)?|입니다|이에요|요)?$/);
+      if (!candidate) return null;
+      const asksDivisor = /(?:어떤|무슨)\s*(?:수|숫자|값)(?:로|으로)\s*나누/.test(question);
+      const expected = asksDivisor ? scoreNums.length : scoreNums.reduce((a,b)=>a+b,0)/scoreNums.length;
+      return Math.abs(Number(candidate[1])-expected)<1e-8?'correct':'incorrect';
+    }
     const time = question.match(/(\d+)\s*분/);
     if (time && /시간/.test(question)) {
       const m = normalized.match(/^(?:답은|정답은)?(\d+)시간(\d+)분(?:이에요|입니다|요)?$/);
@@ -733,26 +759,47 @@
     xai: { label: 'xAI', model: 'grok-4', guide: '<a href="https://console.x.ai/" target="_blank" rel="noopener noreferrer">xAI Console</a>' },
     custom: { label: '사용자 지정 API', model: '', guide: 'OpenAI Chat Completions 호환 API만 지원합니다. 신뢰할 수 있는 제공업체의 HTTPS 주소만 입력하세요.' }
   };
+  async function refreshApiServerStatus() {
+    const el = $('#serverKeyStatus');
+    if (!el) return;
+    const provider = $('#apiProviderSelect').value;
+    el.textContent = '서버에 등록된 API 키 상태를 확인하고 있어요…';
+    try {
+      const response = await fetch('/api/provider-config', { cache: 'no-store' });
+      if (!response.ok) {
+        el.textContent = response.status === 401 ? '먼저 생각별 접속번호로 로그인해 주세요.' : '서버 설정을 확인할 수 없어요.';
+        return;
+      }
+      const data = await response.json();
+      const item = data.providers?.[provider];
+      if (!item) { el.textContent = '선택한 AI 제공업체 정보를 확인할 수 없어요.'; return; }
+      el.textContent = item.configured
+        ? `✅ ${item.label} API 키가 서버에 등록되어 있어요. 앱에 키를 넣을 필요가 없어요.`
+        : `⚠️ ${item.label} API 키가 서버에 없어요. Render → Environment에서 ${item.env}를 등록해 주세요.`;
+    } catch (_) {
+      el.textContent = '서버 연결 상태를 확인하지 못했어요. 인터넷을 확인해 주세요.';
+    }
+  }
   function syncProviderFields({ switched = false } = {}) {
-    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'demo';
-    $('#localGuide').hidden = mode !== 'local';
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     $('#apiProviderFields').hidden = mode !== 'live';
     if (mode !== 'live') return;
     const provider = $('#apiProviderSelect').value;
     const config = PROVIDER_SETTINGS[provider];
     $('#providerGuide').innerHTML = config.guide; // Only static, developer-authored markup.
     $('#customApiRow').hidden = provider !== 'custom';
-    if (switched) { $('#apiModelInput').value = config.model; $('#apiKeyInput').value = ''; }
+    if (switched) { $('#apiModelInput').value = config.model; }
+    refreshApiServerStatus();
     $('#apiConnectionStatus').textContent = '';
     delete $('#apiConnectionStatus').dataset.result;
   }
   async function getLiveHint(photoDataUrl, attemptText = '') {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), state.mode === 'local' ? 155000 : 95000);
+    const timeout = setTimeout(() => controller.abort(), 95000);
     try {
       const response = await fetch('/api/tutor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.mode === 'local' ? 'ollama' : state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, apiKey: state.mode === 'live' ? state.apiKey : '', hintLevel: state.hintLevel, attemptText, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
+        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, attemptText, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
         signal: controller.signal
       });
       const result = await response.json().catch(() => ({}));
@@ -814,7 +861,7 @@
       pending.remove();
       state.hintLevel = Math.max(0, state.hintLevel - 1);
       state.messages.pop();
-      addMessage('teacher', '연결이 잘 되지 않았어요. 설정을 살펴보거나 데모 모드로 다시 해 볼까요? 🌷');
+      addMessage('teacher', 'AI 연결을 확인하고 있어요. 잠시 후 다시 시도하거나 AI 설정의 서버 연결 상태를 확인해 주세요. 🌷');
       showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
     } finally {
       state.busy = false;
@@ -870,10 +917,8 @@
       $('#apiProviderSelect').value = state.provider;
       $('#apiModelInput').value = state.model;
       $('#apiBaseUrlInput').value = state.baseUrl;
-      $('#apiKeyInput').value = state.apiKey;
       syncProviderFields();
       $('#settingStatus').textContent = '';
-      checkLocalStatus();
     } else if (id === 'parentModal') renderReport();
     document.body.style.overflow = 'hidden';
     modal.querySelector('.close-modal').focus();
@@ -883,33 +928,18 @@
     document.body.style.overflow = '';
     (id === 'settingsModal' ? $('#settingsBtn') : id === 'voiceModal' ? $('#openVoiceSettingsBtn') : $('#parentBtn')).focus();
   }
-  async function checkLocalStatus() {
-    const status = $('#localStatus');
-    if (!status) return;
-    status.textContent = 'Ollama 설치·모델 상태 확인 중…';
-    try {
-      const response = await fetch('/api/local-status');
-      const info = await response.json();
-      status.textContent = !info.running
-        ? '🔴 Ollama 미실행: 설치한 후 Ollama를 열어주세요.'
-        : info.installed
-          ? `🟢 로컬 AI 연결 준비 완료 (${info.model})`
-          : `🟡 Ollama 실행 중 · 모델 설치 필요: ollama pull ${info.model}`;
-    } catch (_) { status.textContent = '상태를 확인할 수 없어요. 서버에서 접속해 주세요.'; }
-  }
   function updateMode() {
     const onlineAI = state.mode !== 'demo';
     $('#modeBadge').classList.toggle('live', onlineAI);
-    $('#modeBadge').lastChild.textContent = state.mode === 'local' ? ' 무료 로컬 AI' : state.mode === 'live' ? ` ${PROVIDER_SETTINGS[state.provider]?.label || '외부 API'}` : ' 데모 모드';
-    $('#photoNote').textContent = onlineAI ? (state.mode === 'local' ? '사진은 내 컴퓨터의 AI로만 전송돼요.' : '사진은 AI 요청 때만 전송돼요.') : '데모에서는 사진을 읽지 못해요.';
+    $('#modeBadge').lastChild.textContent = state.mode === 'live' ? ` ${PROVIDER_SETTINGS[state.provider]?.label || '외부 API'}` : ' 데모 모드';
+    $('#photoNote').textContent = onlineAI ? '사진은 선택한 외부 AI 서비스에 질문할 때만 전송돼요.' : '데모에서는 사진을 읽지 못해요.';
   }
   function saveSettings() {
     if (state.busy) { $('#settingStatus').textContent = '응답이 끝난 뒤 설정을 바꿀 수 있어요.'; return; }
-    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'demo';
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
     const model = $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
-    const key = $('#apiKeyInput').value.trim();
     if (mode === 'live' && !/^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(model)) {
       $('#settingStatus').textContent = 'AI 모델 이름을 입력해 주세요.'; return;
     }
@@ -921,18 +951,16 @@
     state.provider = provider;
     state.model = model;
     state.baseUrl = baseUrl;
-    state.apiKey = key;
     savePreferences();
     updateMode(); closeModal('settingsModal');
-    showToast(mode === 'local' ? '무료 로컬 AI를 선택했어요! Ollama 설치·모델 상태를 확인하세요.' : mode === 'live' ? `${PROVIDER_SETTINGS[provider].label} 설정을 저장했어요. 아직 연결을 검사한 것은 아니에요. 질문을 보내서 확인해 주세요.` : '데모 모드로 안전하게 연습해요!');
+    showToast(mode === 'live' ? `${PROVIDER_SETTINGS[provider].label}을 선택했어요. 서버 키는 Render에서 관리해요. 연결 시험으로 확인해 주세요.` : '데모 모드로 연습해요!');
   }
   async function testApiConnection() {
     const status = $('#apiConnectionStatus');
     const button = $('#testApiConnectionBtn');
-    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'demo';
+    const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
     const model = $('#apiModelInput').value.trim();
-    const apiKey = $('#apiKeyInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode !== 'live') { status.textContent = '먼저 외부 AI API 연결을 선택해 주세요.'; return; }
     // Key may be configured securely on the server for mobile HTTPS hosting.
@@ -948,7 +976,7 @@
       // Calls the actual provider; a tiny amount of quota may be used.
       const response = await fetch('/api/tutor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, model, baseUrl: provider === 'custom' ? baseUrl : '', apiKey,
+        body: JSON.stringify({ provider, model, baseUrl: provider === 'custom' ? baseUrl : '',
           grade: '초3~4', subject: '수학', hintLevel: 1, problem: '7 × 6을 어떻게 생각해야 하나요?',
           messages: [{ role: 'user', content: '7 × 6을 계산할 때 힌트 하나를 알려 주세요.' }] }),
         signal: controller.signal
@@ -1017,7 +1045,6 @@
   $('#parentBtn').addEventListener('click', () => openModal('parentModal'));
   $('#saveSettingsBtn').addEventListener('click', saveSettings);
   $('#testApiConnectionBtn').addEventListener('click', testApiConnection);
-  $('#recheckLocalBtn').addEventListener('click', checkLocalStatus);
   $('#clearReportBtn').addEventListener('click', () => {
     if (window.confirm('오늘의 학습 기록을 모두 지울까요?')) {
       state.records = []; saveRecords(); renderReport(); showToast('이 기기의 오늘 학습 기록을 지웠어요.');
