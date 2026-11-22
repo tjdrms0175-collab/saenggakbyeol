@@ -31,7 +31,7 @@
       </div>
     </header>
 
-    <div id="offlineBanner" class="offline-banner" role="status" hidden>📴 인터넷이 연결되지 않았어요. 저장된 화면에서 데모 학습은 할 수 있지만 AI와 음성 인식은 제한될 수 있어요.</div>
+    <div id="offlineBanner" class="offline-banner" role="status" hidden>📴 인터넷이 연결되지 않았어요. 인터넷이 다시 연결되면 대기 중인 AI 질문을 자동으로 이어서 시도해요.</div>
     <main class="layout" id="main">
       <aside class="sidebar" aria-label="학습 설정">
         <div class="side-topline"><span class="mini-sparkle">✳</span> 나만의 공부 공간</div>
@@ -104,6 +104,7 @@
               <button id="understoodBtn" class="assist-button understood" type="button" disabled>🌟 이해했어요!</button>
             </div>
           </div>
+          <div id="retryNotice" class="retry-notice" role="status" aria-live="polite" hidden><span id="retryNoticeText">AI 연결을 다시 시도하고 있어요.</span><button id="cancelRetryBtn" type="button">재연결 중지</button></div>
           <div class="voice-toolbar" aria-label="목소리로 공부하기">
             <div class="voice-toolbar-label"><span aria-hidden="true">🎧</span><span>말로 질문하세요! 잠깐 쉬어도 5.5초 동안 기다려요.</span></div>
             <div class="voice-toolbar-actions">
@@ -141,6 +142,7 @@
         <label class="field-label" for="apiProviderSelect">① API 제공업체</label>
         <select id="apiProviderSelect" class="provider-select">
           <option value="gemini">Google Gemini (Google AI Studio)</option>
+          <option value="freellmapi">FreeLLMAPI (무료 AI 자동 라우팅 · 개인 실험용)</option>
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic Claude</option>
           <option value="openrouter">OpenRouter (다양한 AI 모델)</option>
@@ -159,6 +161,7 @@
         <p class="setting-help">🔒 API 키는 이 앱에 입력하지 않습니다. Render → Environment에 등록된 키를 서버가 직접 사용합니다. 키 내용은 휴대폰으로 전달하지 않아요.</p>
         <div class="api-connection-test">
           <button type="button" id="testApiConnectionBtn" class="recheck-button">🔌 API 연결 테스트</button>
+          <button type="button" id="cancelApiReconnectBtn" class="retry-cancel-settings" hidden>⏹ 재연결 중지</button>
           <p class="setting-help">실제 AI 서버에 짧은 시험 질문을 보내므로 서비스 사용량이 발생할 수 있어요. 연결은 서버에 등록된 API 키로 진행합니다.</p>
           <p class="connection-test-status" id="apiConnectionStatus" role="status" aria-live="polite"></p>
         </div>

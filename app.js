@@ -609,6 +609,7 @@
     saveRecords();
   }
   const PROVIDER_SETTINGS = {
+    freellmapi: { label: 'FreeLLMAPI (개인 실험용)', model: 'auto:smart', guide: '<a href="https://github.com/tashfeenahmed/freellmapi" target="_blank" rel="noopener noreferrer">FreeLLMAPI 공식 저장소</a> · 개인용 무료 API 라우터를 별도로 설치·운영해야 해요. 모델 자동 선택: auto:smart. Render에서는 서버에서 접속 가능한 HTTPS 주소와 API 키가 필요해요. 다른 제공업체로 아이의 질문이 전송될 수 있어요. 다수 사용자 공개 서비스에는 권장하지 않아요.' },
     gemini: { label: 'Google Gemini', model: 'gemini-3.8-flash', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 정확도 우선 추천: gemini-3.8-flash · 무료 한도는 계정마다 다릅니다.' },
     openai: { label: 'OpenAI', model: 'gpt-4.1-mini', guide: '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API 키 발급</a> · 별도 API 비용이 발생할 수 있어요.' },
     anthropic: { label: 'Anthropic Claude', model: 'claude-sonnet-4-5', guide: '<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Claude API 키 발급</a> · 계정별 요금이 적용돼요.' },
@@ -635,8 +636,10 @@
       const item = data.providers?.[provider];
       if (!item) { el.textContent = '선택한 AI 제공업체 정보를 확인할 수 없어요.'; return; }
       el.textContent = item.configured
-        ? `✅ ${item.label} API 키가 서버에 등록되어 있어요. 앱에 키를 넣을 필요가 없어요.`
-        : `⚠️ ${item.label} API 키가 서버에 없어요. Render → Environment에서 ${item.env}를 등록해 주세요.`;
+        ? `✅ ${item.label} 연결 설정이 서버에 등록되어 있어요. 앱에 키를 넣을 필요가 없어요.`
+        : (provider === 'freellmapi' ? '⚠️ FreeLLMAPI 실행 서버의 HTTPS 주소(FREELLMAPI_BASE_URL)와 통합 키(FREELLMAPI_API_KEY)를 Render에 입력하세요.' : `⚠️ ${item.label} API 키가 서버에 없어요. Render → Environment에서 ${item.env}를 등록해 주세요.`);
+      if (provider === 'gemini' && data.freeRouterFallbackEnabled) el.textContent += ' · ⚠️ Gemini가 제한/장애로 응답하지 않으면 학습 질문이 FreeLLMAPI의 다른 제공업체로 전송될 수 있어요.';
+      if (provider === 'freellmapi' && data.freeRouterGeminiReviewEnabled) el.textContent += ' · Gemini가 힌트/정답을 추가 검토하도록 설정되어 있어요.';
     } catch (_) {
       el.textContent = '서버 연결 상태를 확인하지 못했어요. 인터넷을 확인해 주세요.';
     }
@@ -654,20 +657,133 @@
     $('#apiConnectionStatus').textContent = '';
     delete $('#apiConnectionStatus').dataset.result;
   }
-  async function getLiveHint(photoDataUrl, attemptText = '', recheck = false) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 95000);
+  // v16: A single queued question is retried until the temporary outage clears.
+  // No timer runs when the AI is healthy; retries STOP as soon as a valid answer
+  // arrives. 401/403/404 and exhausted 429 quotas are never retried endlessly.
+  let reconnectOperation = null;
+  function newTutorRequestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+  function retryAbortError() {
+    const e = new Error('자동 재연결을 중지했어요. 다시 시도하려면 질문을 보내 주세요.');
+    e.name = 'AbortError';
+    return e;
+  }
+  function updateReconnectNotice(message, source) {
+    if (source === 'test') {
+      $('#apiConnectionStatus').dataset.result = 'testing';
+      $('#apiConnectionStatus').textContent = message;
+      $('#cancelApiReconnectBtn').hidden = false;
+    } else {
+      $('#retryNotice').hidden = false;
+      $('#retryNoticeText').textContent = message;
+    }
+  }
+  function cancelReconnect() {
+    reconnectOperation?.controller.abort();
+  }
+  function pauseBeforeRetry(delay, signal, source) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(retryAbortError());
+      const start = Date.now();
+      const offlineAtStart = !navigator.onLine;
+      let ended = false;
+      const done = (error) => {
+        if (ended) return;
+        ended = true;
+        clearInterval(timer);
+        signal.removeEventListener('abort', onAbort);
+        window.removeEventListener('online', onOnline);
+        error ? reject(error) : resolve();
+      };
+      const onAbort = () => done(retryAbortError());
+      const onOnline = () => { if (offlineAtStart && navigator.onLine) done(); };
+      const timer = setInterval(() => {
+        if (!navigator.onLine) {
+          updateReconnectNotice('📴 인터넷 연결을 기다리고 있어요. 복구되면 자동으로 이어서 질문할게요.', source);
+          return;
+        }
+        const left = Math.max(0, Math.ceil((delay - (Date.now() - start)) / 1000));
+        if (left === 0) return done();
+        updateReconnectNotice(`🔄 AI가 혼잡해요. ${left}초 뒤 자동 재연결해요. 요청 횟수가 늘 수 있어요. 중지할 수 있습니다.`,source);
+      }, 1000);
+      signal.addEventListener('abort', onAbort, {once:true});
+      window.addEventListener('online', onOnline);
+      if (!navigator.onLine) updateReconnectNotice('📴 인터넷 연결을 기다리는 중이에요.',source);
+      else updateReconnectNotice(`🔄 AI가 혼잡해요. ${Math.ceil(delay/1000)}초 뒤 다시 연결할게요.`,source);
+    });
+  }
+  async function requestTutorWithReconnect(payload, source = 'tutor') {
+    if (reconnectOperation) throw new Error('다른 AI 요청의 재연결이 진행 중이에요.');
+    const operation = {controller:new AbortController(), source};
+    reconnectOperation = operation;
+    const body = JSON.stringify({...payload, retryRequestId:newTutorRequestId()});
+    let retries = 0;
+    let quotaRetries = 0;
     try {
-      const response = await fetch('/api/tutor', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.provider, model: state.model, baseUrl: state.provider === 'custom' ? state.baseUrl : '', grade: state.grade, subject: state.subject, hintLevel: state.hintLevel, problemId: state.active?.id || '', attemptText, recheck, problem: state.active?.question || '', messages: state.messages.slice(-12), imageDataUrl: photoDataUrl || null }),
-        signal: controller.signal
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || `API 서버 오류 (${response.status})`);
-      if (typeof result.hint !== 'string' || !result.hint.trim()) throw new Error('AI 힌트를 읽을 수 없어요.');
-      return { hint: result.hint.trim(), problemFocus: typeof result.problemFocus === 'string' ? result.problemFocus.slice(0,140) : '', verdict: result.verdict === 'correct' ? 'correct' : result.verdict === 'incorrect' ? 'incorrect' : 'uncertain', hintCount: Number.isInteger(result.hintCount) ? result.hintCount : state.hintLevel };
-    } finally { clearTimeout(timeout); }
+      while (!operation.controller.signal.aborted) {
+        while (!navigator.onLine) await pauseBeforeRetry(15000, operation.controller.signal, source);
+        const attemptController = new AbortController();
+        const onAbort = () => attemptController.abort();
+        operation.controller.signal.addEventListener('abort', onAbort, {once:true});
+        const timer = setTimeout(() => attemptController.abort(), 105000);
+        let failure;
+        try {
+          if (retries > 0) updateReconnectNotice(`🔄 AI 연결을 다시 시도하고 있어요. (${retries}회 재시도)`,source);
+          const response = await fetch('/api/tutor', {
+            method:'POST',headers:{'Content-Type':'application/json'},body,signal:attemptController.signal,cache:'no-store'
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const error = new Error(result.error || `AI 연결 오류 (HTTP ${response.status})`);
+            error.status = response.status;
+            error.retryable = result.retryable === true;
+            error.retryAfterSeconds = Number(result.retryAfterSeconds) || 0;
+            throw error;
+          }
+          if (!result || typeof result.hint !== 'string' || !result.hint.trim()) throw new Error('AI가 읽을 수 있는 힌트를 반환하지 않았어요.');
+          if (retries > 0) showToast('✅ AI 연결이 복구됐어요! 질문에 대한 답변을 받았어요.');
+          return result;
+        } catch (error) {
+          if (operation.controller.signal.aborted) throw retryAbortError();
+          if (error.name === 'AbortError' || error.name === 'TypeError') {
+            error.retryable = true; // dropped connection or per-request timeout
+          }
+          failure = error;
+        } finally {
+          clearTimeout(timer);
+          operation.controller.signal.removeEventListener('abort', onAbort);
+        }
+        if (!failure.retryable) throw failure;
+        if (failure.status === 429 && ++quotaRetries >= 3) {
+          throw new Error('API 사용 한도가 계속 초과돼요. 자동 재연결을 중지했습니다. 무료 한도나 결제 상태를 확인해 주세요.');
+        }
+        retries++;
+        // Exponential backoff + jitter, capped at 2 minutes. Prevents a thundering herd
+        // and excessive API charges when Google is overloaded. Retry-After wins when set.
+        const expMs = Math.min(120000, 4000 * 2 ** Math.min(retries-1,5));
+        const jitter = Math.floor(Math.random() * Math.min(3000,expMs * .3));
+        const waitMs = Math.min(120000, Math.max(expMs + jitter, Math.min(120000, (failure.retryAfterSeconds||0)*1000)));
+        await pauseBeforeRetry(waitMs, operation.controller.signal, source);
+      }
+      throw retryAbortError();
+    } finally {
+      if (reconnectOperation === operation) reconnectOperation = null;
+      $('#retryNotice').hidden = true;
+      $('#cancelApiReconnectBtn').hidden = true;
+    }
+  }
+  async function getLiveHint(photoDataUrl, attemptText = '', recheck = false) {
+    const result = await requestTutorWithReconnect({
+      provider:state.provider, model:state.model, baseUrl:state.provider==='custom'?state.baseUrl:'',
+      grade:state.grade, subject:state.subject, hintLevel:state.hintLevel,
+      problemId:state.active?.id||'', attemptText, recheck,
+      problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null
+    });
+    return { hint:result.hint.trim(), problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
+      verdict:result.verdict==='correct'?'correct':result.verdict==='incorrect'?'incorrect':'uncertain',
+      hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel };
   }
   async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
     if (state.busy) return;
@@ -719,7 +835,7 @@
         state.active = null; state.messages = []; state.hintLevel = 0;
         if (typed) $('#messageInput').value = typed;
       }
-      addMessage('teacher', '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 연결 상태나 문제 원문을 확인한 뒤 다시 시도해 주세요.');
+      addMessage('teacher', error.name === 'AbortError' ? '자동 재연결을 중지했어요. 🌷 같은 문제를 다시 보내면 이어서 도와줄게요.' : '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 설정과 문제 원문을 확인해 주세요.');
       showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
     } finally {
       state.busy = false;
@@ -829,35 +945,28 @@
     const model = $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode !== 'live') { status.textContent = '먼저 외부 AI API 연결을 선택해 주세요.'; return; }
-    // Key may be configured securely on the server for mobile HTTPS hosting.
+    if (reconnectOperation) { status.textContent = '다른 AI 질문이 진행 중이에요. 완료되면 연결을 시험해 주세요.'; return; }
     if (!/^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(model)) { status.textContent = '유효한 모델명을 입력해 주세요.'; return; }
     if (provider === 'custom' && !/^https:\/\/[^\s]+$/i.test(baseUrl)) { status.textContent = 'HTTPS API 기본 주소를 입력하세요.'; return; }
     status.textContent = `⏳ ${PROVIDER_SETTINGS[provider]?.label || provider} 연결을 시험하고 있어요…`;
     status.dataset.result = 'testing';
     button.disabled = true;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    $('#cancelApiReconnectBtn').hidden = false;
     try {
-      // Explicit user-triggered connection test, not part of saving a key.
-      // Calls the actual provider; a tiny amount of quota may be used.
-      const response = await fetch('/api/tutor', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, model, baseUrl: provider === 'custom' ? baseUrl : '',
-          grade: '초3~4', subject: '수학', hintLevel: 1, problem: '7 × 6을 어떻게 생각해야 하나요?',
-          messages: [{ role: 'user', content: '7 × 6을 계산할 때 힌트 하나를 알려 주세요.' }] }),
-        signal: controller.signal
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || `연결 오류 (HTTP ${response.status})`);
-      if (!result.hint) throw new Error('연결했지만 AI가 글자 힌트를 반환하지 않았어요.');
+      const result = await requestTutorWithReconnect({
+        provider,model,baseUrl:provider === 'custom'?baseUrl:'',grade:'초3~4',subject:'수학',
+        hintLevel:1,problem:'7 × 6을 어떻게 생각해야 하나요?',
+        messages:[{role:'user',content:'7 × 6을 계산할 때 힌트 하나를 알려 주세요.'}]
+      },'test');
+      if (!result.hint) throw new Error('연결했지만 AI가 힌트를 반환하지 않았어요.');
       status.dataset.result = 'success';
-      status.textContent = `✅ 연결 성공! ${provider} · ${model} 모델에서 학습 힌트를 받았어요. 이제 '설정 적용하기'를 누르세요.`;
+      status.textContent = `✅ 연결 성공! ${provider} · ${model} 모델에서 힌트를 받았어요. 자동 재연결을 중지했어요.`;
     } catch (error) {
       status.dataset.result = 'error';
-      status.textContent = error.name === 'AbortError' ? '연결 시험 시간이 초과되었어요. 인터넷 상태를 확인하세요.' : `❌ ${error.message}`;
+      status.textContent = error.name==='AbortError' ? '⏹ 자동 재연결을 중지했어요.' : `❌ ${error.message}`;
     } finally {
-      clearTimeout(timeoutId);
       button.disabled = false;
+      $('#cancelApiReconnectBtn').hidden = true;
     }
   }
 
@@ -969,6 +1078,8 @@
   $('#parentBtn').addEventListener('click', () => openModal('parentModal'));
   $('#saveSettingsBtn').addEventListener('click', saveSettings);
   $('#testApiConnectionBtn').addEventListener('click', testApiConnection);
+  $('#cancelRetryBtn').addEventListener('click', cancelReconnect);
+  $('#cancelApiReconnectBtn').addEventListener('click', cancelReconnect);
   $('#clearReportBtn').addEventListener('click', () => {
     if (window.confirm('오늘의 학습 기록을 모두 지울까요?')) {
       state.records = []; saveRecords(); renderReport(); showToast('이 기기의 오늘 학습 기록을 지웠어요.');

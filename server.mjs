@@ -46,7 +46,7 @@ function sessionCookie(req) {
   return `${AUTH_COOKIE}=${SESSION_TOKEN}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure ? '; Secure' : ''}`;
 }
 
-const HINT_ENGINE_VERSION = TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v16-auto-reconnect-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -165,6 +165,7 @@ function readBody(req) {
 // The UI allows an explicit model name because available models change over time.
 const API_PROVIDERS = Object.freeze({
   gemini: { name: 'Google Gemini', kind: 'gemini', env: 'GEMINI_API_KEY', model: 'gemini-3.8-flash' },
+  freellmapi: { name: 'FreeLLMAPI (개인 실험용)', kind: 'chat', env: 'FREELLMAPI_API_KEY', model: 'auto:smart' },
   openai: { name: 'OpenAI', kind: 'chat', env: 'OPENAI_API_KEY', model: 'gpt-4.1-mini', base: 'https://api.openai.com/v1' },
   anthropic: { name: 'Anthropic Claude', kind: 'anthropic', env: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-5' },
   openrouter: { name: 'OpenRouter', kind: 'chat', env: 'OPENROUTER_API_KEY', model: 'google/gemini-2.5-flash', base: 'https://openrouter.ai/api/v1' },
@@ -176,7 +177,30 @@ const API_PROVIDERS = Object.freeze({
   custom: { name: '기타 OpenAI 호환 API', kind: 'chat', env: 'CUSTOM_API_KEY', model: '' },
 });
 const safeProviderModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9_.:\/+\-]{1,145}$/.test(s);
+function freeGatewayUrl() {
+  // Only the operator can set this URL on the server. Never accept it from the browser.
+  // A Render-hosted site cannot reach the owner's laptop at localhost.
+  const raw = String(process.env.FREELLMAPI_BASE_URL || '').trim();
+  if (!raw || raw.length > 350) return null;
+  try {
+    const u = new URL(raw);
+    const isLoopback = ['localhost','127.0.0.1','[::1]'].includes(u.hostname);
+    // freellmapi.co is a project/catalog site, NOT the user's inference gateway.
+    if (['freellmapi.co','www.freellmapi.co'].includes(u.hostname)) return null;
+    if (u.username || u.password || u.search || u.hash ||
+        !u.pathname.match(/^\/(?:[a-zA-Z0-9_./-]*)$/) ||
+        (u.protocol !== 'https:' && !(process.env.NODE_ENV !== 'production' && u.protocol === 'http:' && isLoopback))) return null;
+    if (process.env.NODE_ENV === 'production' && isLoopback) return null;
+    let base = u.toString().replace(/\/+$/, '');
+    if (!base.endsWith('/v1')) base += '/v1';
+    return base;
+  } catch { return null; }
+}
+function freeGatewayReady() {
+  return Boolean(freeGatewayUrl() && process.env.FREELLMAPI_API_KEY?.trim());
+}
 function apiBaseUrl(provider, supplied) {
+  if (provider === 'freellmapi') return freeGatewayUrl();
   if (provider !== 'custom') return API_PROVIDERS[provider].base;
   const raw = typeof supplied === 'string' ? supplied.trim() : '';
   if (!raw || raw.length > 300) return null;
@@ -206,7 +230,7 @@ function apiError(status, provider = '') {
   if (status === 401) return 'HTTP 401: API 키가 유효하지 않아요. 키를 다시 확인해 주세요.';
   if (status === 403) return 'HTTP 403: 이 API 키의 프로젝트에 접근 권한이 없어요. Google AI Studio의 프로젝트·사용 권한을 확인해 주세요.';
   if (status === 402) return 'HTTP 402: API 결제 또는 크레딧 상태를 확인해 주세요.';
-  if (status === 429) return 'HTTP 429: 무료 사용량·요청 횟수 한도에 도달했어요. AI Studio 사용량을 확인하거나 나중에 다시 시도해 주세요.';
+  if (status === 429) return 'HTTP 429: 해당 AI의 무료 사용량·요청 한도에 도달했어요. 제공업체 사용량을 확인하거나 나중에 다시 시도해 주세요.';
   if (status === 503) return 'HTTP 503: 서비스가 일시적으로 혼잡해요. 잠시 후 다시 시도해 주세요.';
   return `HTTP ${status}: AI 서비스에서 정상적인 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.`;
 }
@@ -238,7 +262,7 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
     };
   } else {
     const base = apiBaseUrl(provider, baseUrl);
-    if (!base) throw new TutorEngineError('사용자 지정 API는 올바른 HTTPS 주소를 입력해 주세요.', 400);
+    if (!base) throw new TutorEngineError(provider === 'freellmapi' ? 'FreeLLMAPI 서버 주소를 확인하세요. Render → Environment의 FREELLMAPI_BASE_URL에는 연결 가능한 HTTPS 주소가 필요해요.' : '사용자 지정 API는 올바른 HTTPS 주소를 입력해 주세요.', 400);
     endpoint = `${base}/chat/completions`;
     headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
     if (provider === 'openrouter') headers['HTTP-Referer'] = 'https://saenggakbyeol.local';
@@ -259,11 +283,27 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
       redirect:'error', signal: AbortSignal.timeout(41000)
     });
   } catch (err) {
-    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') throw new TutorEngineError('AI가 문제를 분석하거나 검토하는 시간이 길어졌어요. 다시 시도해 주세요.', 504);
-    throw new TutorEngineError('AI 서버와 연결하지 못했어요. Render와 API 설정을 확인해 주세요.', 502);
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') { const e = new TutorEngineError('AI가 문제를 분석하거나 검토하는 시간이 길어졌어요. 자동으로 다시 연결할게요.', 504); e.retryable = true; throw e; }
+    const e = new TutorEngineError('AI 서버와 연결하지 못했어요. 자동 재연결을 시도할게요.', 502); e.retryable = true; throw e;
   }
   if (!response.ok) {
-    throw new TutorEngineError(apiError(response.status, provider), response.status >= 400 && response.status < 500 ? response.status : 502);
+    // Preserve the ORIGINAL upstream status: otherwise 503 becomes 502 and the
+    // client cannot distinguish congestion from an invalid model/auth error.
+    const error = new TutorEngineError(apiError(response.status, provider), response.status);
+    error.retryable = [408, 500, 502, 503, 504].includes(response.status);
+    // 429 can mean a daily quota (which must not be retried forever). Respect
+    // a short explicit Retry-After; otherwise let the user inspect quota.
+    const after = response.headers.get('retry-after');
+    let seconds = /^\d+(?:\.\d+)?$/.test(after || '') ? Number(after) : NaN;
+    if (!Number.isFinite(seconds) && after) {
+      const timestamp = Date.parse(after);
+      if (Number.isFinite(timestamp)) seconds = Math.ceil((timestamp - Date.now()) / 1000);
+    }
+    if (Number.isFinite(seconds) && seconds > 0 && seconds <= 120) {
+      error.retryAfterSeconds = Math.ceil(seconds);
+      if (response.status === 429) error.retryable = true;
+    }
+    throw error;
   }
   let result;
   try {
@@ -285,36 +325,92 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
   return raw;
 }
 
-async function tutor(req, res) {
-  let body;
-  try { body = JSON.parse(await readBody(req)); }
-  catch (_) { return json(res, 400, { error:'요청 형식을 확인해 주세요.' }); }
+/** All provider routing is server-controlled. A personal FreeLLMAPI router must
+ *  be independently hosted, reachable via authenticated HTTPS, and privately
+ *  configured. Neither its address nor its key comes from learner input. */
+function createStageInvoker({provider, model, key, baseUrl, imageDataUrl}) {
+  const freeParams = () => ({provider:'freellmapi',model:'auto:smart',key:process.env.FREELLMAPI_API_KEY?.trim() || '',baseUrl:undefined,imageDataUrl});
+  const geminiParams = () => ({provider:'gemini',model: process.env.GEMINI_MODEL || API_PROVIDERS.gemini.model,
+    key: process.env.GEMINI_API_KEY?.trim() || '',baseUrl:undefined,imageDataUrl});
+  return async params => {
+    if (provider === 'freellmapi' && params.stage.endsWith('review') &&
+        process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && process.env.GEMINI_API_KEY?.trim()) {
+      try { return await requestTutorModel({...params,...geminiParams()}); }
+      catch (e) { // Never silently accept a failed review or return unvalidated draft.
+        if (!(e instanceof TutorEngineError) || ![429,502,503,504].includes(e.status)) throw e;
+      }
+    }
+    try { return await requestTutorModel({...params,provider,model,key,baseUrl,imageDataUrl}); }
+    catch (e) {
+      // Explicit opt-in, only from Gemini to an operator's own private free router.
+      if (provider !== 'gemini' || process.env.FREELLMAPI_FALLBACK !== '1' || !freeGatewayReady() ||
+          !(e instanceof TutorEngineError) || ![429,502,503,504].includes(e.status)) throw e;
+      return requestTutorModel({...params,...freeParams()});
+    }
+  };
+}
+
+// Retry-safe request identity. Reusing the same request ID after a network
+// interruption returns the SAME completed hint rather than counting it twice.
+// Entries are in-memory only (Render restarts clear them); they expire after 30m.
+const completedTutorCalls = new Map();
+const REQUEST_TTL = 30 * 60_000;
+function retryErrorPayload(error) {
+  const payload = { error: error.message, retryable: error.retryable === true };
+  if (Number.isInteger(error.retryAfterSeconds)) payload.retryAfterSeconds = error.retryAfterSeconds;
+  return payload;
+}
+async function computeTutorResponse(body) {
   const image = body?.imageDataUrl;
   if (image && (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/.test(image) || image.length > 4*1024*1024)) {
-    return json(res, 400, { error:'사진은 JPG·PNG·WEBP, 4MB 이내로 올려 주세요.' });
+    return { status:400, data:{error:'사진은 JPG·PNG·WEBP, 4MB 이내로 올려 주세요.'} };
   }
   const provider = body.provider || 'gemini';
   const details = API_PROVIDERS[provider];
-  if (!details) return json(res, 400, { error:'지원하지 않는 AI 제공업체예요.' });
+  if (!details) return {status:400, data:{error:'지원하지 않는 AI 제공업체예요.'}};
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : details.model;
-  if (!safeProviderModel(model)) return json(res, 400, { error:'AI 모델 이름을 확인해 주세요.' });
+  if (!safeProviderModel(model)) return {status:400, data:{error:'AI 모델 이름을 확인해 주세요.'}};
   const key = process.env[details.env]?.trim() || '';
-  if (!key || key.length > 1000) return json(res, 400, { error:`${details.name} API 키가 서버에 없어요. Render → Environment에서 ${details.env}를 등록해 주세요.` });
+  if (!key || key.length > 1000) return {status:400, data:{error:`${details.name} API 키가 서버에 없어요. Render → Environment에서 ${details.env}를 등록해 주세요.`}};
+  if (provider === 'freellmapi' && !freeGatewayUrl()) return {status:400,data:{error:'FreeLLMAPI 연결 주소가 없거나 올바르지 않아요. Render의 FREELLMAPI_BASE_URL을 확인하세요.'}};
   try {
     const progress = getTrackedProblem(body);
-    if (body.problemId && !progress) return json(res, 409, {error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'});
-    // Hint numbers are computed on the SERVER, not trusted from the client.
+    if (body.problemId && !progress) return {status:409,data:{error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'}};
     const hintLevel = progress ? progress.hints + 1 : 1;
-    const answer = await runTutorFlow({ ...body, hintLevel, hasPhoto: Boolean(image) }, async params =>
-      requestTutorModel({ ...params, provider, model, key, baseUrl:body.baseUrl, imageDataUrl:image })
-    );
+    const answer = await runTutorFlow({ ...body, hintLevel, hasPhoto: Boolean(image) },
+      createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:image}));
     if (progress && answer.verdict !== 'correct') progress.hints++;
-    return json(res, 200, { ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
-      source:`${provider}-reviewed`, model, engine:HINT_ENGINE_VERSION });
+    return { status:200, data:{ ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
+      source:`${provider}-reviewed`, model, engine:HINT_ENGINE_VERSION } };
   } catch (error) {
-    if (error instanceof TutorEngineError) return json(res, error.status, { error:error.message });
-    return json(res, 502, { error:'AI가 문제를 검토하는 과정에서 오류가 생겼어요. 다시 시도해 주세요.' });
+    if (error instanceof TutorEngineError) return {status:error.status, data:retryErrorPayload(error)};
+    return {status:502, data:{error:'AI가 문제를 검토하는 과정에서 오류가 생겼어요. 다시 시도해 주세요.', retryable:false}};
   }
+}
+async function tutor(req, res) {
+  let body;
+  try { body = JSON.parse(await readBody(req)); }
+  catch (_) { return json(res, 400, {error:'요청 형식을 확인해 주세요.'}); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res,400,{error:'요청 형식을 확인해 주세요.'});
+  const requestId = typeof body.retryRequestId === 'string' ? body.retryRequestId : '';
+  if (requestId && !/^[A-Za-z0-9_-]{16,90}$/.test(requestId)) return json(res,400,{error:'요청 식별자가 올바르지 않아요.'});
+  if (!requestId) { const result = await computeTutorResponse(body); return json(res,result.status,result.data); }
+  // Scope the key to the client's authenticated session and request body.
+  const identity = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+  const storageKey = `${SESSION_TOKEN.slice(0,16)}:${requestId}`;
+  const existing = completedTutorCalls.get(storageKey);
+  if (existing && existing.identity !== identity) return json(res,409,{error:'동일 요청 번호로 다른 질문을 보낼 수 없어요.'});
+  if (completedTutorCalls.size > 500) {
+    for (const [key, entry] of completedTutorCalls) if (entry.expiresAt < Date.now()) completedTutorCalls.delete(key);
+    if (completedTutorCalls.size > 1000) completedTutorCalls.clear();
+  }
+  const entry = existing || {identity,expiresAt:Date.now()+REQUEST_TTL,
+    promise:computeTutorResponse(body)};
+  if (!existing) completedTutorCalls.set(storageKey, entry);
+  const result = await entry.promise;
+  if (result.status !== 200) completedTutorCalls.delete(storageKey);
+  else entry.expiresAt = Date.now() + REQUEST_TTL;
+  return json(res,result.status,result.data);
 }
 
 // Opt-in natural Korean teacher speech via the Gemini Developer API (separate billable TTS model).
@@ -421,15 +517,16 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.startsWith('/api/') && url.pathname !== '/api/health' && !authenticated(req)) {
     return json(res, 401, {error:'생각별 접근번호가 필요해요. 화면의 접근번호를 입력해 주세요.'});
   }
-  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.values(API_PROVIDERS).some(p => !!process.env[p.env]) });
+  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
   if (url.pathname === '/api/provider-config' && req.method === 'GET') {
     const providers = Object.fromEntries(Object.entries(API_PROVIDERS).map(([id, p]) => [id, {
       label: p.name,
       env: p.env,
-      configured: Boolean(process.env[p.env]?.trim())
+      configured: id === 'freellmapi' ? freeGatewayReady() : Boolean(process.env[p.env]?.trim())
     }]));
     // Never return any API key or secret value to the browser.
-    return json(res, 200, { providers });
+    return json(res, 200, { providers, freeRouterFallbackEnabled: process.env.FREELLMAPI_FALLBACK === '1' && freeGatewayReady(),
+      freeRouterGeminiReviewEnabled: process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && Boolean(process.env.GEMINI_API_KEY?.trim()) });
   }
   if (url.pathname === '/api/answer/config' && req.method === 'GET') {
     try { return json(res, 200, {requiredHints:REQUIRED_HINTS, pinChanged:!!readAnswerPin(req), pinScope:'this-device'}); }
@@ -468,11 +565,12 @@ const server = http.createServer(async (req, res) => {
     if (!safeProviderModel(model)) return json(res,400,{error:'모델 이름을 확인해 주세요.'});
     const key=process.env[details.env]?.trim() || '';
     if (!key) return json(res,400,{error:'Render에 해당 AI 서비스 키가 등록되지 않았어요.'});
+    if (provider === 'freellmapi' && !freeGatewayUrl()) return json(res,400,{error:'FreeLLMAPI 서버의 HTTPS 주소를 Render에 등록해 주세요.'});
     const photo=body.imageDataUrl;
     if (photo && (typeof photo !== 'string' || photo.length>4*1024*1024 || !imageParts(photo))) return json(res,400,{error:'문제 사진을 다시 확인해 주세요.'});
     try {
       const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo},
-        params=>requestTutorModel({...params,provider,model,key,baseUrl:body.baseUrl,imageDataUrl:photo}));
+        createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:photo}));
       return json(res,200,{...result,requiredHints:REQUIRED_HINTS});
     } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
   }

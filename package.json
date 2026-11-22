@@ -1,13 +1,13 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
-  "description": "AI-first tutor with five-hint parent PIN gated answer (PWA)",
+  "description": "AI-first mobile tutor: Gemini / FreeLLMAPI with temporary-outage reconnect and cancellation",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs",
-    "test": "node --test tutor-engine.test.mjs"
+    "test": "node --test tutor-engine.test.mjs router-integration.test.mjs reconnect-integration.test.mjs"
   },
   "engines": {
     "node": ">=20"

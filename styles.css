@@ -130,3 +130,9 @@
 .answer-modal .key-input{font-family:inherit;font-size:18px;letter-spacing:0.14em;margin-bottom:8px}
 .answer-modal .primary-wide{margin-top:15px}
 @media(max-width:750px){.hint-actions{flex-wrap:wrap}.hint-actions .answer-locked{flex-basis:100%;min-height:42px}.parent-pin-section{padding:12px}}
+
+/* v16: automatic reconnect status and explicit user cancel */
+.retry-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:9px 0;border-radius:13px;background:#fff6df;border:1px solid #f0d89a;color:#76592c;font-size:12px;font-weight:750;line-height:1.55}
+.retry-notice button,.retry-cancel-settings{flex-shrink:0;border:1px solid #d4bdde;border-radius:10px;background:#fff;color:#755598;font-size:12px;font-weight:850;padding:9px 11px}
+.retry-cancel-settings{margin-top:8px}
+@media(max-width:520px){.retry-notice{align-items:stretch;flex-direction:column}.retry-notice button{align-self:flex-end}}
