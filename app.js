@@ -86,13 +86,13 @@
     영어: ['영어 문장에서 주어는 어떻게 찾나요?', '현재형과 과거형은 무엇이 달라요?']
   };
 
-  // Installed-app convenience: save only non-secret preferences, never API/TTS keys.
+  // Save UI preferences; API keys remain server-side.
   const savedPreferences = (() => {
     try { const v = JSON.parse(localStorage.getItem('thinkstar-prefs-v8') || '{}'); return v && typeof v === 'object' ? v : {}; }
     catch (_) { return {}; }
   })();
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? savedPreferences.model : 'gemini-3.8-flash', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.5-flash-lite' : savedPreferences.model) : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -100,23 +100,16 @@
   // Browser Web Speech API: no paid API required. Microphone recognition may use
   // the browser vendor's online recognition service (not guaranteed offline).
   const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const voiceSupported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function';
   const voice = {
-    autoRead: savedPreferences.autoRead !== false, recognition: null, listening: false, baseText: '',
-    finalText: '', heardAnything: false, error: '',
-    utterance: null, speakingButton: null, completedText: '', currentInterim: '',
-    mode: savedPreferences.voiceMode === 'gemini' ? 'gemini' : 'browser', preferredVoice: typeof savedPreferences.preferredVoice === 'string' ? savedPreferences.preferredVoice : 'auto', geminiVoice: ['Zephyr','Callirrhoe','Aoede'].includes(savedPreferences.geminiVoice) ? savedPreferences.geminiVoice : 'Zephyr',
-    availableVoices: [], audio: null, audioUrl: null, audioRequest: null, playToken: 0,
-    startedAt: 0, lastSpeechAt: 0, silenceTimer: null, restartTimer: null, restartCount: 0
+    recognition:null, listening:false, baseText:'', finalText:'', heardAnything:false,
+    error:'', completedText:'', currentInterim:'',
+    startedAt:0,lastSpeechAt:0,silenceTimer:null,restartTimer:null,restartCount:0
   };
   function savePreferences() {
     try {
       localStorage.setItem('thinkstar-prefs-v8', JSON.stringify({
         grade: state.grade, subject: state.subject, mode: state.mode, modeVersion: 11,
-        provider: state.provider, model: state.model, baseUrl: state.baseUrl,
-        autoRead: voice.autoRead, voiceMode: voice.mode,
-        preferredVoice: voice.preferredVoice, geminiVoice: voice.geminiVoice,
-        rate: Number($('#speechRateSelect')?.value) || 0.92
+        provider: state.provider, model: state.model, baseUrl: state.baseUrl
       }));
     } catch (_) { /* Storage disabled; use session only. */ }
   }
@@ -167,158 +160,6 @@
     const last = voice.lastSpeechAt || voice.startedAt;
     const wait = (voice.lastSpeechAt ? SILENCE_GRACE_MS : FIRST_SPEECH_WAIT_MS) - (Date.now() - last);
     voice.silenceTimer = setTimeout(() => stopListening({ announce: true }), Math.max(100, wait));
-  }
-  function updateReplayButtons() {
-    document.querySelectorAll('.audio-replay-button').forEach((button) => {
-      const speaking = button === voice.speakingButton;
-      button.classList.toggle('is-speaking', speaking);
-      button.textContent = speaking ? '⏹ 읽기 멈추기' : '🔊 다시 듣기';
-      button.setAttribute('aria-label', speaking ? '선생님 답변 읽기 중지' : '선생님 답변 음성으로 다시 듣기');
-    });
-  }
-  function stopSpeaking() {
-    voice.playToken += 1;
-    if (voice.audioRequest) { voice.audioRequest.abort(); voice.audioRequest = null; }
-    if (voice.audio) { voice.audio.pause(); voice.audio.src = ''; voice.audio = null; }
-    if (voice.audioUrl) { URL.revokeObjectURL(voice.audioUrl); voice.audioUrl = null; }
-    voice.utterance = null;
-    voice.speakingButton = null;
-    if (voiceSupported) window.speechSynthesis.cancel();
-    updateReplayButtons();
-  }
-  function preferredVoiceScore(item) {
-    const name = `${item.name} ${item.voiceURI || ''}`.toLowerCase();
-    if (!/^ko(?:-|_)/i.test(item.lang || '')) return -1e3;
-    let score = 0;
-    if (/sunhi|sun-hi|선희|hayoung|ha-young|하영|yuna|유나|jimin|지민|서현|sohyun|sora|소라|heami|혜미|hyuna|현아/.test(name)) score += 150;
-    if (/natural|neural|online/.test(name)) score += 85;
-    if (/female|woman|여성/.test(name)) score += 55;
-    if (/google 한국어|google korean/.test(name)) score += 10;
-    if (/male|man|남성|injoon|인준/.test(name)) score -= 175;
-    return score;
-  }
-  function refreshBrowserVoices() {
-    if (!voiceSupported) return;
-    const available = window.speechSynthesis.getVoices().filter((item) => /^ko(?:-|_)/i.test(item.lang || ''));
-    voice.availableVoices = available.sort((a, b) => preferredVoiceScore(b) - preferredVoiceScore(a));
-    const select = $('#teacherVoiceSelect');
-    const current = voice.preferredVoice;
-    select.replaceChildren();
-    const auto = document.createElement('option');
-    auto.value = 'auto'; auto.textContent = '🌷 가장 부드러운 한국어 목소리 자동 선택';
-    select.appendChild(auto);
-    voice.availableVoices.forEach((item) => {
-      const option = document.createElement('option');
-      option.value = item.voiceURI;
-      option.textContent = `${/natural|neural/i.test(item.name) ? '✨ ' : ''}${item.name}`;
-      select.appendChild(option);
-    });
-    select.value = current === 'auto' || voice.availableVoices.some((item) => item.voiceURI === current) ? current : 'auto';
-    if (!voice.availableVoices.length) {
-      $('#teacherVoiceInfo').textContent = '이 브라우저에서 한국어 목소리를 찾지 못했어요. Windows에서는 Microsoft Edge에서 다시 확인해 주세요.';
-    } else if (voice.mode === 'browser') {
-      const candidate = voice.availableVoices[0];
-      $('#teacherVoiceInfo').textContent = `현재 추천: ${candidate.name} · 실제 여성 목소리와 자연스러움은 PC에 설치된 음성에 따라 달라요. 마음에 안 들면 목록에서 바꿔 보세요.`;
-    }
-  }
-  function chosenBrowserVoice() {
-    if (voice.preferredVoice !== 'auto') {
-      const chosen = voice.availableVoices.find((item) => item.voiceURI === voice.preferredVoice);
-      if (chosen) return chosen;
-    }
-    return voice.availableVoices[0] || null;
-  }
-  function setVoiceMode(mode) {
-    stopSpeaking();
-    voice.mode = mode === 'gemini' ? 'gemini' : 'browser';
-    $('#teacherVoiceMode').value = voice.mode;
-    $('#browserVoiceRow').hidden = voice.mode !== 'browser';
-    $('#teacherSpeechRateRow').hidden = voice.mode !== 'browser';
-    $('#geminiVoiceRow').hidden = voice.mode !== 'gemini';
-        if (voice.mode === 'gemini') {
-      $('#teacherVoiceInfo').textContent = 'Gemini 3.8 Flash-Lite TTS는 별도 음성 생성 API입니다. 무료 구간이 없을 수 있으며 요금/사용량이 발생합니다. Gemini 키는 Render 서버의 환경변수 GEMINI_API_KEY에서만 관리해요. 아이의 답변 문장이 Google로 전송됩니다.';
-    } else {
-      refreshBrowserVoices();
-    }
-    savePreferences();
-  }
-  function browserSpeak(message, button, token) {
-    if (!voiceSupported) { showToast('이 브라우저에서 음성 읽기를 지원하지 않아요. Edge 또는 Chrome을 이용해 주세요.'); return; }
-    const utterance = new SpeechSynthesisUtterance(message);
-    utterance.lang = 'ko-KR';
-    utterance.rate = Number($('#speechRateSelect').value) || 0.92;
-    utterance.pitch = 1.06;
-    utterance.volume = 1;
-    const koreanVoice = chosenBrowserVoice();
-    if (koreanVoice) utterance.voice = koreanVoice;
-    voice.utterance = utterance;
-    voice.speakingButton = button;
-    updateReplayButtons();
-    const finish = () => {
-      if (voice.playToken === token) {
-        voice.utterance = null; voice.speakingButton = null; updateReplayButtons();
-      }
-    };
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    try { window.speechSynthesis.speak(utterance); }
-    catch (_) { finish(); showToast('음성을 재생하지 못했어요. 스피커를 확인해 주세요.'); }
-  }
-  async function geminiSpeak(message, button, token) {
-        voice.speakingButton = button;
-    updateReplayButtons();
-    // When hosted, GEMINI_API_KEY can be configured securely on the backend.
-    // The server returns a clear error when neither server nor session key exists.
-    const controller = new AbortController();
-    voice.audioRequest = controller;
-    if (button) button.textContent = '⏳ 목소리 만드는 중…';
-    try {
-      const response = await fetch('/api/tts', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: message.slice(0, 550), voiceName: voice.geminiVoice }),
-        signal: controller.signal
-      });
-      if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.error || `Gemini 음성 API 오류 (HTTP ${response.status})`);
-      }
-      const blob = await response.blob();
-      if (voice.playToken !== token) return;
-      const audioUrl = URL.createObjectURL(blob);
-      const audio = new Audio(audioUrl);
-      voice.audioUrl = audioUrl;
-      voice.audio = audio;
-      const finish = () => {
-        if (voice.playToken === token) {
-          voice.audio = null;
-          voice.speakingButton = null;
-          URL.revokeObjectURL(audioUrl);
-          voice.audioUrl = null;
-          updateReplayButtons();
-        }
-      };
-      audio.addEventListener('ended', finish, { once: true });
-      audio.addEventListener('error', finish, { once: true });
-      await audio.play();
-    } catch (error) {
-      if (voice.playToken !== token || error.name === 'AbortError') return;
-      showToast(error?.message || 'Gemini 목소리를 만들지 못했어요. 무료 음성 모드로 변경해 보세요.');
-      voice.speakingButton = null;
-      updateReplayButtons();
-    } finally {
-      if (voice.audioRequest === controller) voice.audioRequest = null;
-    }
-  }
-  function speakTeacher(message, button = null) {
-    const sentence = String(message || '').replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '').trim();
-    if (!sentence) return;
-    if (button && button === voice.speakingButton && (voice.utterance || voice.audio || voice.audioRequest)) {
-      stopSpeaking(); return;
-    }
-    stopSpeaking();
-    const token = voice.playToken;
-    if (voice.mode === 'gemini') geminiSpeak(sentence, button, token);
-    else browserSpeak(sentence, button, token);
   }
   function beginRecognitionSegment() {
     if (!voice.listening) return;
@@ -391,7 +232,6 @@
     }
     if (voice.listening) { stopListening({ announce: true }); return; }
     if (state.busy) return;
-    stopSpeaking(); // Prevent the teacher's voice from being transcribed.
     voice.listening = true;
     voice.baseText = $('#messageInput').value.trim();
     voice.finalText = '';
@@ -409,39 +249,9 @@
   }
   function initVoice() {
     $('#micBtn').addEventListener('click', toggleMicrophone);
-    $('#autoSpeakBtn').addEventListener('click', () => {
-      voice.autoRead = !voice.autoRead;
-      $('#autoSpeakBtn').setAttribute('aria-pressed', String(voice.autoRead));
-      $('#autoSpeakBtn').textContent = voice.autoRead ? '🔊 자동 읽기 켜짐' : '🔇 자동 읽기 꺼짐';
-      if (!voice.autoRead) stopSpeaking();
-      savePreferences();
-      showToast(voice.autoRead ? '선생님이 힌트를 자동으로 읽어 줄게요!' : '이제 버튼을 누를 때만 소리 내어 읽어요.');
-    });
     if (!SpeechRecognitionClass) {
       voiceNotice('이 브라우저에서는 말로 질문하기를 지원하지 않아요. 최신 크롬 또는 엣지에서 열어 주세요.', 'error');
       $('#micBtn').title = '현재 브라우저에서는 음성 인식이 지원되지 않습니다';
-    }
-    $('#openVoiceSettingsBtn').addEventListener('click', () => {
-      openModal('voiceModal');
-      refreshBrowserVoices();
-    });
-    $('#teacherVoiceMode').addEventListener('change', (event) => setVoiceMode(event.target.value));
-    $('#teacherVoiceSelect').addEventListener('change', (event) => { voice.preferredVoice = event.target.value; stopSpeaking(); savePreferences(); });
-    $('#geminiVoiceSelect').addEventListener('change', (event) => { voice.geminiVoice = event.target.value; stopSpeaking(); savePreferences(); });
-    $('#voicePreviewBtn').addEventListener('click', () => speakTeacher('안녕하세요! 저는 생각별 선생님이에요. 우리 오늘도 천천히, 즐겁게 공부해 볼까요?', null));
-    $('#voiceStopBtn').addEventListener('click', stopSpeaking);
-    $('#speechRateSelect').addEventListener('change', () => { stopSpeaking(); savePreferences(); });
-    const savedRate = Number(savedPreferences.rate);
-    if ([0.82, 0.92, 1.02, 1.12].includes(savedRate)) $('#speechRateSelect').value = String(savedRate);
-    $('#autoSpeakBtn').setAttribute('aria-pressed', String(voice.autoRead));
-    $('#autoSpeakBtn').textContent = voice.autoRead ? '🔊 자동 읽기 켜짐' : '🔇 자동 읽기 꺼짐';
-    $('#geminiVoiceSelect').value = voice.geminiVoice;
-    setVoiceMode(voice.mode);
-    if (voiceSupported) {
-      window.speechSynthesis.addEventListener?.('voiceschanged', refreshBrowserVoices);
-      refreshBrowserVoices();
-    } else {
-      $('#teacherVoiceInfo').textContent = '브라우저 기본 목소리를 찾지 못했어요. Gemini 음성 API를 사용하거나 Edge 브라우저에서 열어 주세요.';
     }
     updateMicrophoneUi();
   }
@@ -521,7 +331,7 @@
   }
   function resetConversation() {
     stopListening();
-    stopSpeaking();
+
     voiceNotice('🎤 마이크를 누르면 질문을 글자로 바꿀 수 있어요.');
     state.active = null;
     state.messages = [];
@@ -572,15 +382,6 @@
       understanding.textContent = `🔎 문제 이해: ${focus.slice(0, 135)}`;
       content.appendChild(understanding);
     }
-    if (role === 'teacher' && !loading && message && voiceSupported) {
-      const replay = document.createElement('button');
-      replay.type = 'button';
-      replay.className = 'audio-replay-button';
-      replay.textContent = '🔊 다시 듣기';
-      replay.setAttribute('aria-label', '선생님 답변 음성으로 다시 듣기');
-      replay.addEventListener('click', () => speakTeacher(message, replay));
-      content.appendChild(replay);
-    }
     if (!loading) {
       const time = document.createElement('div');
       time.className = 'message-time';
@@ -598,6 +399,7 @@
     state.hintLevel = 0;
     state.answerShown = false;
     state.messages = [];
+    const routeNotice=$('#geminiRouteNotice'); if(routeNotice) routeNotice.hidden=true;
     state.records.push({ id, day: nowDay(), time: new Date().toISOString(), grade: state.grade, subject: state.subject, question: question || '사진으로 올린 문제', hints: 0, understood: false, solved: false, revealed: false });
     saveRecords();
   }
@@ -610,7 +412,7 @@
   }
   const PROVIDER_SETTINGS = {
     freellmapi: { label: 'FreeLLMAPI (개인 실험용)', model: 'auto:smart', guide: '<a href="https://github.com/tashfeenahmed/freellmapi" target="_blank" rel="noopener noreferrer">FreeLLMAPI 공식 저장소</a> · 개인용 무료 API 라우터를 별도로 설치·운영해야 해요. 모델 자동 선택: auto:smart. Render에서는 서버에서 접속 가능한 HTTPS 주소와 API 키가 필요해요. 다른 제공업체로 아이의 질문이 전송될 수 있어요. 다수 사용자 공개 서비스에는 권장하지 않아요.' },
-    gemini: { label: 'Google Gemini', model: 'gemini-3.8-flash', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 정확도 우선 추천: gemini-3.8-flash · 무료 한도는 계정마다 다릅니다.' },
+    gemini: { label: 'Google Gemini', model: 'gemini-3.5-flash-lite', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 자동 전환: ① Gemini 3.5 Flash-Lite → ② Gemini 3.6 Flash → ③ Gemini 3.8 Flash. 모델 선택과 전환은 Render 서버에서 관리해요. 429 제한에 걸린 모델은 일시적으로 건너뛰고 다시 확인합니다. 모델별 무료 한도와 요금은 계정마다 달라요.' },
     openai: { label: 'OpenAI', model: 'gpt-4.1-mini', guide: '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API 키 발급</a> · 별도 API 비용이 발생할 수 있어요.' },
     anthropic: { label: 'Anthropic Claude', model: 'claude-sonnet-4-5', guide: '<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Claude API 키 발급</a> · 계정별 요금이 적용돼요.' },
     openrouter: { label: 'OpenRouter', model: 'google/gemini-2.5-flash', guide: '<a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter API 키 발급</a> · 모델 이름과 요금/무료 표시를 확인하세요.' },
@@ -638,11 +440,25 @@
       el.textContent = item.configured
         ? `✅ ${item.label} 연결 설정이 서버에 등록되어 있어요. 앱에 키를 넣을 필요가 없어요.`
         : (provider === 'freellmapi' ? '⚠️ FreeLLMAPI 실행 서버의 HTTPS 주소(FREELLMAPI_BASE_URL)와 통합 키(FREELLMAPI_API_KEY)를 Render에 입력하세요.' : `⚠️ ${item.label} API 키가 서버에 없어요. Render → Environment에서 ${item.env}를 등록해 주세요.`);
+      if (provider === 'gemini' && data.geminiRoute) {
+        const r=data.geminiRoute;
+        el.textContent += ` · 자동 모델: ${(r.models||[r.primary,r.secondary,r.tertiary]).filter(Boolean).join(' → ')}` + (r.current ? ` · 현재 ${r.current} 사용 가능` : ' · 모두 대기 중');
+      }
       if (provider === 'gemini' && data.freeRouterFallbackEnabled) el.textContent += ' · ⚠️ Gemini가 제한/장애로 응답하지 않으면 학습 질문이 FreeLLMAPI의 다른 제공업체로 전송될 수 있어요.';
       if (provider === 'freellmapi' && data.freeRouterGeminiReviewEnabled) el.textContent += ' · Gemini가 힌트/정답을 추가 검토하도록 설정되어 있어요.';
     } catch (_) {
       el.textContent = '서버 연결 상태를 확인하지 못했어요. 인터넷을 확인해 주세요.';
     }
+  }
+  function showGeminiRouteNotice(reply) {
+    const el=$('#geminiRouteNotice');
+    if (!el) return;
+    const fallback=state.provider==='gemini' && reply?.geminiRoute?.fallbackActive &&
+      reply.usedModel && reply.usedModel!==reply.geminiRoute.primary;
+    if (fallback) {
+      el.hidden=false;
+      el.textContent=`🔄 앞선 Gemini 모델이 사용량 제한 상태여서 ${reply.usedModel} 모델로 자동 전환했어요. 제한이 풀리면 우선 모델을 다시 사용해요.`;
+    } else el.hidden=true;
   }
   function syncProviderFields({ switched = false } = {}) {
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
@@ -652,7 +468,9 @@
     const config = PROVIDER_SETTINGS[provider];
     $('#providerGuide').innerHTML = config.guide; // Only static, developer-authored markup.
     $('#customApiRow').hidden = provider !== 'custom';
-    if (switched) { $('#apiModelInput').value = config.model; }
+    if (switched || provider === 'gemini') { $('#apiModelInput').value = config.model; }
+    $('#apiModelInput').readOnly = provider === 'gemini';
+    $('#geminiAutoHelp').hidden = provider !== 'gemini';
     refreshApiServerStatus();
     $('#apiConnectionStatus').textContent = '';
     delete $('#apiConnectionStatus').dataset.result;
@@ -783,13 +601,14 @@
     });
     return { hint:result.hint.trim(), problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
       verdict:result.verdict==='correct'?'correct':result.verdict==='incorrect'?'incorrect':'uncertain',
-      hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel };
+      hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel,
+      usedModel:typeof result.model==='string'?result.model:'', geminiRoute:result.geminiRoute||null };
   }
   async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
     if (state.busy) return;
     const typed = (text || '').trim().slice(0, 1600);
     if (voice.listening) stopListening();
-    stopSpeaking();
+
     const uploadedImage = state.photo ? state.photo.dataUrl : null;
     if (!typed && !uploadedImage) { showToast('질문을 적거나 사진을 올려 주세요!'); return; }
     const isNew = !state.active;
@@ -812,9 +631,9 @@
       const attemptText = !isNew && !fromHintButton && !fromRecheck && typed ? typed : '';
       const reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText, fromRecheck);
       state.hintLevel = reply.hintCount;
+      showGeminiRouteNotice(reply);
       pending.remove();
       addMessage('teacher', reply.hint, { focus: reply.problemFocus });
-      if (voice.autoRead) speakTeacher(reply.hint);
       state.messages.push({ role: 'assistant', content: reply.hint });
       if (reply.verdict === 'correct') {
         updateRecord({ solved: true });
@@ -849,7 +668,6 @@
     addMessage('student', '이해했어요! 🌟');
     const encouragement = '와, 스스로 생각해 봤군요! 정말 멋져요! 🎉 다음 문제도 도전해 볼까요?';
     addMessage('teacher', encouragement);
-    if (voice.autoRead && !voice.listening) speakTeacher(encouragement);
     state.active = null; state.messages = [];
     updateProgress();
     showToast('오늘의 공부 기록에 반짝 별이 추가됐어요! ✨');
@@ -889,7 +707,7 @@
     if (id === 'settingsModal') {
       $(`input[name="mode"][value="${state.mode}"]`).checked = true;
       $('#apiProviderSelect').value = state.provider;
-      $('#apiModelInput').value = state.model;
+      $('#apiModelInput').value = state.provider==='gemini'?'gemini-3.5-flash-lite':state.model;
       $('#apiBaseUrlInput').value = state.baseUrl;
       syncProviderFields();
       $('#settingStatus').textContent = '';
@@ -908,19 +726,20 @@
   function closeModal(id) {
     $(`#${id}`).hidden = true;
     document.body.style.overflow = '';
-    (id === 'settingsModal' ? $('#settingsBtn') : id === 'voiceModal' ? $('#openVoiceSettingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus();
+    (id === 'settingsModal' ? $('#settingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus();
   }
   function updateMode() {
     const onlineAI = true;
     $('#modeBadge').classList.toggle('live', onlineAI);
     $('#modeBadge').lastChild.textContent = ` ${PROVIDER_SETTINGS[state.provider]?.label || 'AI 분석'}`;
+    if(state.provider!=='gemini') $('#geminiRouteNotice').hidden=true;
     $('#photoNote').textContent = '사진은 선택한 외부 AI 서비스에 문제를 분석·검토할 때 전송돼요.';
   }
   function saveSettings() {
     if (state.busy) { $('#settingStatus').textContent = '응답이 끝난 뒤 설정을 바꿀 수 있어요.'; return; }
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'gemini-3.5-flash-lite' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode === 'live' && !/^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(model)) {
       $('#settingStatus').textContent = 'AI 모델 이름을 입력해 주세요.'; return;
@@ -942,7 +761,7 @@
     const button = $('#testApiConnectionBtn');
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'gemini-3.5-flash-lite' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode !== 'live') { status.textContent = '먼저 외부 AI API 연결을 선택해 주세요.'; return; }
     if (reconnectOperation) { status.textContent = '다른 AI 질문이 진행 중이에요. 완료되면 연결을 시험해 주세요.'; return; }
@@ -960,7 +779,8 @@
       },'test');
       if (!result.hint) throw new Error('연결했지만 AI가 힌트를 반환하지 않았어요.');
       status.dataset.result = 'success';
-      status.textContent = `✅ 연결 성공! ${provider} · ${model} 모델에서 힌트를 받았어요. 자동 재연결을 중지했어요.`;
+      status.textContent = `✅ 연결 성공! 실제 응답 모델: ${result.model || model}. 자동 재연결을 중지했어요.`;
+      showGeminiRouteNotice({usedModel:result.model, geminiRoute:result.geminiRoute});
     } catch (error) {
       status.dataset.result = 'error';
       status.textContent = error.name==='AbortError' ? '⏹ 자동 재연결을 중지했어요.' : `❌ ${error.message}`;
@@ -1014,7 +834,6 @@
       if (typeof data.answer!=='string' || !data.answer.trim()) throw Error('AI 정답을 확인하지 못했어요.');
       const msg=`🔐 학부모 확인 후 공개한 정답: ${data.answer.trim()}${data.explanation?'\n\n풀이 설명: '+data.explanation:''}`;
       addMessage('teacher',msg);
-      if (voice.autoRead) speakTeacher(msg);
       state.messages.push({role:'assistant',content:'보호자 확인 후 정답이 공개됐어요.'});
       state.answerShown=true;
       updateRecord({revealed:true});

@@ -46,7 +46,7 @@ function sessionCookie(req) {
   return `${AUTH_COOKIE}=${SESSION_TOKEN}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure ? '; Secure' : ''}`;
 }
 
-const HINT_ENGINE_VERSION = 'v16-auto-reconnect-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v18-gemini-three-step-no-tts-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -164,7 +164,7 @@ function readBody(req) {
 // Official native APIs and documented OpenAI-compatible Chat Completions endpoints.
 // The UI allows an explicit model name because available models change over time.
 const API_PROVIDERS = Object.freeze({
-  gemini: { name: 'Google Gemini', kind: 'gemini', env: 'GEMINI_API_KEY', model: 'gemini-3.8-flash' },
+  gemini: { name: 'Google Gemini', kind: 'gemini', env: 'GEMINI_API_KEY', model: 'gemini-3.5-flash-lite' },
   freellmapi: { name: 'FreeLLMAPI (개인 실험용)', kind: 'chat', env: 'FREELLMAPI_API_KEY', model: 'auto:smart' },
   openai: { name: 'OpenAI', kind: 'chat', env: 'OPENAI_API_KEY', model: 'gpt-4.1-mini', base: 'https://api.openai.com/v1' },
   anthropic: { name: 'Anthropic Claude', kind: 'anthropic', env: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-5' },
@@ -177,6 +177,54 @@ const API_PROVIDERS = Object.freeze({
   custom: { name: '기타 OpenAI 호환 API', kind: 'chat', env: 'CUSTOM_API_KEY', model: '' },
 });
 const safeProviderModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9_.:\/+\-]{1,145}$/.test(s);
+// Gemini text models in user-specified priority. TTS is intentionally disabled.
+// Each model is tried only if it is not temporarily paused by its own 429.
+const GEMINI_MODELS = Object.freeze(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash']);
+const GEMINI_COOLDOWN_MS = process.env.NODE_ENV === 'test' && process.env.GEMINI_TEST_COOLDOWN_MS
+  ? Math.max(1, Number(process.env.GEMINI_TEST_COOLDOWN_MS) || 1) : 15 * 60_000;
+const geminiPauseUntil = new Map();
+let geminiLastSuccess = null;
+function geminiRouteInfo() {
+  const now = Date.now();
+  const current = GEMINI_MODELS.find(model => (geminiPauseUntil.get(model) || 0) <= now) || null;
+  const paused = GEMINI_MODELS.filter(model => (geminiPauseUntil.get(model) || 0) > now)
+    .map(model => ({model,retryAfterSeconds:Math.ceil((geminiPauseUntil.get(model)-now)/1000)}));
+  return {
+    models: GEMINI_MODELS, primary: GEMINI_MODELS[0], secondary: GEMINI_MODELS[1] || null,
+    tertiary: GEMINI_MODELS[2] || null, current,
+    fallbackActive: current !== GEMINI_MODELS[0],
+    primaryRetryAfterSeconds:Math.max(0,Math.ceil(((geminiPauseUntil.get(GEMINI_MODELS[0]) || 0)-now)/1000)),
+    paused, lastSuccessfulModel: geminiLastSuccess,
+  };
+}
+async function requestGeminiInOrder(params, onUsed) {
+  let lastQuotaError = null;
+  for (const model of GEMINI_MODELS) {
+    if ((geminiPauseUntil.get(model) || 0) > Date.now()) continue;
+    try {
+      const result = await requestTutorModel({...params,provider:'gemini',model});
+      geminiLastSuccess = model;
+      onUsed?.(model);
+      return result;
+    } catch (error) {
+      // Switch models on quota exhaustion only. Credentials and 503 outages are
+      // handled separately, without claiming that a daily limit was exhausted.
+      if (!(error instanceof TutorEngineError) || error.status !== 429) throw error;
+      const suggested = Number.isFinite(error.retryAfterSeconds) ? error.retryAfterSeconds*1000 : 0;
+      geminiPauseUntil.set(model,Date.now()+Math.max(GEMINI_COOLDOWN_MS,suggested));
+      lastQuotaError = error;
+    }
+  }
+  if (lastQuotaError) {
+    // All models are temporarily exhausted: don't infinitely replay the same
+    // request even if the final upstream response includes Retry-After.
+    lastQuotaError.retryable = false;
+    delete lastQuotaError.retryAfterSeconds;
+    throw lastQuotaError;
+  }
+  throw new TutorEngineError('선택한 Gemini 모델이 모두 일시적으로 사용량 제한 상태예요. 잠시 후 다시 시도해 주세요.',429);
+}
+
 function freeGatewayUrl() {
   // Only the operator can set this URL on the server. Never accept it from the browser.
   // A Render-hosted site cannot reach the owner's laptop at localhost.
@@ -328,24 +376,31 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
 /** All provider routing is server-controlled. A personal FreeLLMAPI router must
  *  be independently hosted, reachable via authenticated HTTPS, and privately
  *  configured. Neither its address nor its key comes from learner input. */
-function createStageInvoker({provider, model, key, baseUrl, imageDataUrl}) {
+function createStageInvoker({provider, model, key, baseUrl, imageDataUrl, onModelUsed}) {
   const freeParams = () => ({provider:'freellmapi',model:'auto:smart',key:process.env.FREELLMAPI_API_KEY?.trim() || '',baseUrl:undefined,imageDataUrl});
-  const geminiParams = () => ({provider:'gemini',model: process.env.GEMINI_MODEL || API_PROVIDERS.gemini.model,
+  const geminiParams = () => ({provider:'gemini',model:GEMINI_MODELS[0],
     key: process.env.GEMINI_API_KEY?.trim() || '',baseUrl:undefined,imageDataUrl});
   return async params => {
     if (provider === 'freellmapi' && params.stage.endsWith('review') &&
         process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && process.env.GEMINI_API_KEY?.trim()) {
-      try { return await requestTutorModel({...params,...geminiParams()}); }
+      try { return await requestGeminiInOrder({...params,...geminiParams()}, onModelUsed); }
       catch (e) { // Never silently accept a failed review or return unvalidated draft.
         if (!(e instanceof TutorEngineError) || ![429,502,503,504].includes(e.status)) throw e;
       }
     }
-    try { return await requestTutorModel({...params,provider,model,key,baseUrl,imageDataUrl}); }
+    try {
+      if (provider === 'gemini') return await requestGeminiInOrder({...params,provider,key,baseUrl,imageDataUrl}, onModelUsed);
+      const reply = await requestTutorModel({...params,provider,model,key,baseUrl,imageDataUrl});
+      onModelUsed?.(model);
+      return reply;
+    }
     catch (e) {
       // Explicit opt-in, only from Gemini to an operator's own private free router.
       if (provider !== 'gemini' || process.env.FREELLMAPI_FALLBACK !== '1' || !freeGatewayReady() ||
           !(e instanceof TutorEngineError) || ![429,502,503,504].includes(e.status)) throw e;
-      return requestTutorModel({...params,...freeParams()});
+      const reply = await requestTutorModel({...params,...freeParams()});
+      onModelUsed?.('FreeLLMAPI/auto:smart');
+      return reply;
     }
   };
 }
@@ -377,11 +432,13 @@ async function computeTutorResponse(body) {
     const progress = getTrackedProblem(body);
     if (body.problemId && !progress) return {status:409,data:{error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'}};
     const hintLevel = progress ? progress.hints + 1 : 1;
+    let lastUsedModel = model;
     const answer = await runTutorFlow({ ...body, hintLevel, hasPhoto: Boolean(image) },
-      createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:image}));
+      createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:image, onModelUsed:m=>{lastUsedModel=m;}}));
     if (progress && answer.verdict !== 'correct') progress.hints++;
     return { status:200, data:{ ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
-      source:`${provider}-reviewed`, model, engine:HINT_ENGINE_VERSION } };
+      source:`${provider}-reviewed`, model:lastUsedModel,
+      geminiRoute: provider==='gemini'?geminiRouteInfo():undefined, engine:HINT_ENGINE_VERSION } };
   } catch (error) {
     if (error instanceof TutorEngineError) return {status:error.status, data:retryErrorPayload(error)};
     return {status:502, data:{error:'AI가 문제를 검토하는 과정에서 오류가 생겼어요. 다시 시도해 주세요.', retryable:false}};
@@ -411,63 +468,6 @@ async function tutor(req, res) {
   if (result.status !== 200) completedTutorCalls.delete(storageKey);
   else entry.expiresAt = Date.now() + REQUEST_TTL;
   return json(res,result.status,result.data);
-}
-
-// Opt-in natural Korean teacher speech via the Gemini Developer API (separate billable TTS model).
-// Gemini TTS also uses the server environment key. Never log keys or audio.
-async function generateTeacherSpeech(req, res) {
-  let data;
-  try { data = JSON.parse(await readBody(req)); }
-  catch (_) { return json(res, 400, { error: '음성 요청을 읽지 못했어요.' }); }
-  const rawText = typeof data?.text === 'string' ? data.text.trim() : '';
-  if (!rawText || rawText.length > 550) return json(res, 400, { error: '음성 문장은 1~550자로 입력해 주세요.' });
-  const allowedVoice = new Set(['Zephyr', 'Callirrhoe', 'Aoede']);
-  const voiceName = allowedVoice.has(data.voiceName) ? data.voiceName : 'Zephyr';
-  const key = process.env.GEMINI_API_KEY?.trim() || '';
-  if (!key || key.length > 1000) return json(res, 400, { error: 'Gemini 음성 API 키가 서버에 없어요. Render → Environment에서 GEMINI_API_KEY를 설정하세요.' });
-  // Gemini 3.8 TTS interactions API, returns a WAV audio block as base64.
-  // Entire content is the teacher's existing text: it may not invent new answers.
-  const request = {
-    model: 'gemini-3.8-flash-lite-tts',
-    input: [{ type: 'user_input', content: [{
-      type: 'text', text: rawText,
-      annotations: [{ type: 'speech_metadata', style: 'Korean, warm and gentle adult female elementary school teacher; kind, affectionate and patient; natural intonation, clear diction, unhurried comfortable conversational pace; never robotic or exaggerated. Read only the transcript exactly.' }]
-    }] }],
-    response_format: { type: 'audio', mime_type: 'audio/wav' },
-    generation_config: { speech_config: [{ voice: voiceName }] }
-  };
-  let upstream;
-  try {
-    upstream = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify(request), signal: AbortSignal.timeout(90000)
-    });
-  } catch (err) {
-    return json(res, 502, { error: err?.name === 'TimeoutError' ? 'Gemini 음성 요청 시간이 초과되었어요.' : 'Gemini 음성 서버에 연결하지 못했어요. 인터넷을 확인하세요.' });
-  }
-  if (!upstream.ok) {
-    if (upstream.status === 400) return json(res, 502, { error: 'Gemini 음성 요청 또는 모델 설정을 확인해 주세요. 해당 TTS 모델 접근이 제한되었을 수 있어요.' });
-    if (upstream.status === 401 || upstream.status === 403) return json(res, 502, { error: 'Gemini TTS 사용 권한이나 API 키, 결제 설정을 확인해 주세요.' });
-    if (upstream.status === 404) return json(res, 502, { error: 'Gemini 음성 모델 접근이 불가능합니다. Gemini 모델/계정 권한을 확인해 주세요.' });
-    if (upstream.status === 429) return json(res, 502, { error: 'Gemini TTS 사용량 한도를 초과했어요. 잠시 후 다시 시도하거나 무료 음성으로 바꿔 주세요.' });
-    return json(res, 502, { error: `Gemini 음성 생성 실패 (HTTP ${upstream.status}). 무료 목소리로 전환해 보세요.` });
-  }
-  let output;
-  try { output = await upstream.json(); }
-  catch (_) { return json(res, 502, { error: 'Gemini 음성 응답 형식을 읽지 못했어요.' }); }
-  const audioBlock = (output.steps || [])
-    .filter(step => step?.type === 'model_output')
-    .flatMap(step => step.content || [])
-    .filter(part => part?.type === 'audio' && typeof part.data === 'string').at(-1);
-  const base64 = audioBlock?.data || output.output_audio?.data;
-  if (!base64 || typeof base64 !== 'string') return json(res, 502, { error: 'Gemini가 음성 데이터를 반환하지 않았어요. TTS 모델 권한을 확인해 주세요.' });
-  const audio = Buffer.from(base64, 'base64');
-  if (audio.length < 44 || audio.length > 9 * 1024 * 1024 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') {
-    return json(res, 502, { error: 'Gemini에서 올바른 WAV 음성을 받지 못했어요.' });
-  }
-  res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': audio.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
-  return res.end(audio);
 }
 
 const STATIC = new Map([
@@ -526,7 +526,8 @@ const server = http.createServer(async (req, res) => {
     }]));
     // Never return any API key or secret value to the browser.
     return json(res, 200, { providers, freeRouterFallbackEnabled: process.env.FREELLMAPI_FALLBACK === '1' && freeGatewayReady(),
-      freeRouterGeminiReviewEnabled: process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && Boolean(process.env.GEMINI_API_KEY?.trim()) });
+      freeRouterGeminiReviewEnabled: process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && Boolean(process.env.GEMINI_API_KEY?.trim()),
+      geminiRoute:geminiRouteInfo() });
   }
   if (url.pathname === '/api/answer/config' && req.method === 'GET') {
     try { return json(res, 200, {requiredHints:REQUIRED_HINTS, pinChanged:!!readAnswerPin(req), pinScope:'this-device'}); }
@@ -571,15 +572,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo},
         createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:photo}));
-      return json(res,200,{...result,requiredHints:REQUIRED_HINTS});
+      return json(res,200,{...result,requiredHints:REQUIRED_HINTS, geminiRoute:provider==='gemini'?geminiRouteInfo():undefined});
     } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
-  }
-  if (url.pathname === '/api/tts') {
-    if (req.method !== 'POST') return json(res, 405, { error: 'POST만 지원해요.' });
-    if (!sameOrigin(req)) {
-      return json(res, 403, { error: '허용되지 않은 출처예요.' });
-    }
-    return generateTeacherSpeech(req, res);
   }
   if (url.pathname === '/api/tutor') {
     if (req.method !== 'POST') return json(res, 405, { error: 'POST만 지원해요.' });
