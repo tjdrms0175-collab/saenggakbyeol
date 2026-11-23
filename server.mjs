@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runTutorFlow, runAnswerRevealFlow, TutorEngineError, HintQualityError, TUTOR_ENGINE_VERSION } from './tutor-engine.mjs';
+import { parsePhotoReading, PhotoReadError, PHOTO_READ_PROMPT } from './photo-reader.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -66,7 +67,7 @@ function aiQuotaExceeded(req) {
   return null;
 }
 
-const HINT_ENGINE_VERSION = 'v31-context-aware-hint-repair-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v34-photo-text-confirmation-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -501,13 +502,20 @@ async function computeTutorResponse(body) {
   const key = process.env[details.env]?.trim() || '';
   if (!key || key.length > 1000) return {status:400, data:{error:`${details.name} API 키가 서버에 없어요. Render → Environment에서 ${details.env}를 등록해 주세요.`}};
   if (provider === 'freellmapi' && !freeGatewayUrl()) return {status:400,data:{error:'FreeLLMAPI 연결 주소가 없거나 올바르지 않아요. Render의 FREELLMAPI_BASE_URL을 확인하세요.'}};
+  // Reject photos lacking verified transcription BEFORE creating any per-problem
+  // progress entry. Otherwise an unverified placeholder poisons the digest.
+  if (image && (!body.photoTextConfirmed || !String(body.problem||'').trim() || String(body.problem).trim()==='사진으로 올린 문제'))
+    return {status:422,data:{code:'PHOTO_TEXT_REQUIRED',error:'사진에서 읽은 문제 문장을 먼저 확인해 주세요.'}};
   try {
     const progress = getTrackedProblem(body);
     if (body.problemId && !progress) return {status:409,data:{error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'}};
     const hintLevel = progress ? progress.hints + 1 : 1;
     let lastUsedModel = model;
-    const answer = await runTutorWithSafeRepair({ ...body, hintLevel, hasPhoto: Boolean(image) },
-      createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:image, onModelUsed:m=>{lastUsedModel=m;}}));
+    // Once the student has checked the extracted text, send text (not the image)
+    // to the tutoring stages. The photo is still included in the digest so
+    // changing photos cannot inherit another question's hint progress.
+    const answer = await runTutorWithSafeRepair({ ...body, hintLevel, hasPhoto: Boolean(image) && !body.photoTextConfirmed },
+      createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:image, onModelUsed:m=>{lastUsedModel=m;}}));
     if (progress && answer.verdict !== 'correct') progress.hints++;
     return { status:200, data:{ ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
       source:`${provider}-reviewed`, model:lastUsedModel,
@@ -543,6 +551,32 @@ async function tutor(req, res) {
   return json(res,result.status,result.data);
 }
 
+// v34: Two-phase photo flow. Recognition cannot be mistaken for a hint.
+async function readProblemPhoto(req,res) {
+  if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 요청이에요.'});
+  let body;
+  try { body=JSON.parse(await readBody(req)); }
+  catch { return json(res,400,{code:'PHOTO_INVALID',error:'사진 요청을 읽지 못했어요.'}); }
+  const img=body?.imageDataUrl;
+  if (typeof img!=='string' || img.length>4*1024*1024 || !imageParts(img))
+    return json(res,400,{code:'PHOTO_INVALID',error:'사진을 JPG·PNG·WEBP 형식으로 다시 첨부해 주세요.'});
+  const quota=aiQuotaExceeded(req);
+  if (quota) return json(res,429,quota);
+  const key=process.env.GEMINI_API_KEY?.trim();
+  if (!key) return json(res,503,{code:'PHOTO_AI_MISSING',error:'사진 인식용 Gemini API 키가 서버에 등록되지 않았어요. 관리자에게 문의해 주세요.'});
+  try {
+    const raw=await requestGeminiInOrder({provider:'gemini',model:GEMINI_MODELS[0],key,
+      stage:'photo-read',instructions:PHOTO_READ_PROMPT,
+      payload:{task:'transcribe_question_and_all_choices',no_solution:true},imageDataUrl:img});
+    const reading=parsePhotoReading(raw);
+    return json(res,200,{...reading,source:'image-recognition'});
+  } catch (e) {
+    if (e instanceof PhotoReadError) return json(res,e.status,{code:e.code,error:e.message,retryable:false});
+    if (e instanceof TutorEngineError) return json(res,e.status,{...retryErrorPayload(e),code:'PHOTO_API_ERROR'});
+    return json(res,502,{code:'PHOTO_READ_ERROR',error:'사진 인식 중 문제가 생겼어요. 다시 촬영하거나 문제를 글자로 적어 주세요.'});
+  }
+}
+
 const STATIC = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
@@ -565,6 +599,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/login' && req.method === 'POST') {
     return json(res, 200, { ok:true, loginRemoved:true });
   }
+  if (url.pathname === '/api/photo/read' && req.method === 'POST') return readProblemPhoto(req,res);
   if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
   if (url.pathname === '/api/provider-config' && req.method === 'GET') {
     const providers = Object.fromEntries(Object.entries(API_PROVIDERS).map(([id, p]) => [id, {
@@ -634,8 +669,8 @@ const server = http.createServer(async (req, res) => {
     const photo=body.imageDataUrl;
     if (photo && (typeof photo !== 'string' || photo.length>4*1024*1024 || !imageParts(photo))) return json(res,400,{error:'문제 사진을 다시 확인해 주세요.'});
     try {
-      const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo},
-        createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:photo}));
+      const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo && !body.photoTextConfirmed},
+        createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:photo}));
       return json(res,200,{...result,requiredHints:REQUIRED_HINTS, geminiRoute:provider==='gemini'?geminiRouteInfo():undefined});
     } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
   }

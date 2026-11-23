@@ -217,6 +217,19 @@
       <button type="button" class="primary-wide" id="installModalCloseBtn">확인했어요</button>
     </section>
   </div>
+  <div class="modal-backdrop" id="photoReadModal" hidden>
+    <section class="modal photo-read-modal" role="dialog" aria-modal="true" aria-labelledby="photoReadTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">촬영한 문제 확인</span><h2 id="photoReadTitle">🔎 사진에서 읽은 문제</h2></div><button type="button" class="close-modal" id="photoReadCloseBtn" aria-label="닫기">×</button></div>
+      <p class="modal-description">문제와 A·B·C·D 선택지가 모두 제대로 적혔나요? 틀린 부분은 직접 고쳐 주세요. 확인해야 힌트가 시작됩니다.</p>
+      <label class="field-label" for="photoRecognizedText">인식된 문제 문장과 보기</label>
+      <textarea id="photoRecognizedText" class="photo-recognized-input" rows="8" maxlength="1600" spellcheck="false" aria-label="사진에서 읽은 문제를 수정하는 칸"></textarea>
+      <p id="photoReadWarning" class="photo-read-warning" role="status"></p>
+      <div class="photo-read-actions">
+        <button type="button" id="photoReadCancelBtn" class="photo-read-cancel">다시 촬영할게요</button>
+        <button type="button" id="photoReadConfirmBtn" class="photo-read-confirm">맞아요, 힌트 시작</button>
+      </div>
+    </section>
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <!-- v33: Use in-page camera instead of depending on Android camera intent returning a file. -->

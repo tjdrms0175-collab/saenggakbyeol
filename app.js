@@ -659,19 +659,68 @@
       $('#cancelApiReconnectBtn').hidden = true;
     }
   }
+  // An attached photo must first be converted to visible text and checked by
+  // the learner; otherwise the tutor's hint reviewer sees a placeholder.
+  let photoReviewInProgress = false;
+  let photoReviewReady = null;
+  async function beginPhotoRecognition(imageDataUrl) {
+    if (photoReviewInProgress || state.busy) return;
+    photoReviewInProgress = true;
+    state.busy = true;
+    updateProgress();
+    showToast('📷 사진 속 문제와 선택지를 읽고 있어요…');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 75000);
+    try {
+      const response=await fetch('/api/photo/read', {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({imageDataUrl}),signal:controller.signal,cache:'no-store'});
+      const result=await response.json().catch(()=>({}));
+      if (!response.ok) throw Error(result.error || `사진 인식 오류 (${response.status})`);
+      if (!result.problem || result.problem.trim().length<12) throw Error('사진에서 문제를 충분히 읽지 못했어요. 다시 촬영해 주세요.');
+      if (state.photo?.dataUrl!==imageDataUrl) return;
+      photoReviewReady = {imageDataUrl,recognizedText:result.problem.trim()};
+      $('#photoRecognizedText').value=result.problem.trim();
+      $('#photoReadWarning').textContent=result.warning || '문제 글자를 확인해 주세요.';
+      openModal('photoReadModal');
+    } catch (error) {
+      if (error.name==='AbortError') showToast('사진 인식 시간이 길어졌어요. 잠시 후 다시 시도해 주세요.');
+      else showToast('사진을 분석하지 못했어요. '+error.message);
+      // The image remains attached; the student may retry or type the question.
+    } finally {
+      clearTimeout(timeout);
+      photoReviewInProgress=false;
+      state.busy=false;
+      updateProgress();
+    }
+  }
+  function cancelPhotoReview() {
+    photoReviewReady=null;
+    closeModal('photoReadModal',{restoreFocus:false});
+  }
+  function confirmPhotoReview() {
+    const accepted=$('#photoRecognizedText').value.trim().slice(0,1600);
+    if (!photoReviewReady || state.photo?.dataUrl!==photoReviewReady.imageDataUrl) {
+      showToast('사진이 변경됐어요. 다시 인식해 주세요.'); return;
+    }
+    if (accepted.length<12) { showToast('문제 문장을 확인하거나 고쳐 주세요.'); return; }
+    photoReviewReady=null;
+    closeModal('photoReadModal',{restoreFocus:false});
+    sendMessage(accepted,{photoReviewed:true});
+  }
   async function getLiveHint(photoDataUrl, attemptText = '', recheck = false) {
     const result = await requestTutorWithReconnect({
       provider:state.provider, model:state.model, baseUrl:state.provider==='custom'?state.baseUrl:'',
       grade:state.grade, subject:state.subject, hintLevel:state.hintLevel,
       problemId:state.active?.id||'', attemptText, recheck,
-      problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null
+      problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null,
+      photoTextConfirmed: Boolean(state.active?.photoReviewed)
     });
     return { hint:result.hint.trim(), detectedSubject: ['국어','수학','사회','과학','영어','기타'].includes(result.detectedSubject) ? result.detectedSubject : '자동', problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
       verdict:['correct','incorrect','step_correct'].includes(result.verdict)?result.verdict:'uncertain',
       hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel,
       usedModel:typeof result.model==='string'?result.model:'', geminiRoute:result.geminiRoute||null };
   }
-  async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
+  async function sendMessage(text, { fromHintButton = false, fromRecheck = false, photoReviewed = false } = {}) {
     if (state.busy) return;
     cancelAnswerScroll();
     const typed = (text || '').trim().slice(0, 1600);
@@ -679,12 +728,28 @@
 
     const uploadedImage = state.photo ? state.photo.dataUrl : null;
     if (!typed && !uploadedImage) { showToast('질문을 적거나 사진을 올려 주세요!'); return; }
+    if (uploadedImage && (fromHintButton || fromRecheck)) {
+      showToast('새 사진은 먼저 보내기를 눌러 문제 문장을 확인해 주세요.'); return;
+    }
+    if (uploadedImage && !photoReviewed && !fromHintButton && !fromRecheck) {
+      await beginPhotoRecognition(uploadedImage);
+      return;
+    }
     // Close the phone keyboard on send: retaining input focus made the browser
     // jump to the question box even after a teacher reply had been rendered.
     const focused = document.activeElement;
     if (focused === $('#messageInput') || focused?.closest?.('#messageForm')) focused.blur();
-    const isNew = !state.active;
+    let isNew = !state.active;
+    // A newly attached photo is a new exercise, not an extra hint about the
+    // preceding exercise. Keep the photo through a full conversation reset.
+    if (uploadedImage && state.active && state.active.photoDataUrl !== uploadedImage) {
+      resetConversation();
+      state.photo={dataUrl:uploadedImage};
+      $('#photoThumbnail').src=uploadedImage;$('#photoPreview').hidden=false;
+    }
+    isNew=!state.active;
     if (isNew) makeProblem(typed, !!uploadedImage);
+    if (photoReviewed && state.active) state.active.photoReviewed=true;
     if (uploadedImage && state.active) state.active.photoDataUrl = uploadedImage; // kept only in memory for next hints
     if (!isNew && uploadedImage && typed && state.active.question === '사진으로 올린 문제') {
       updateRecord({ question: typed });
@@ -945,6 +1010,7 @@
     }
   }
   function clearPhoto() {
+    photoReviewReady = null;
     state.photo = null;
     $('#photoThumbnail').removeAttribute('src');
     $('#photoPreview').hidden = true;
@@ -1123,7 +1189,7 @@
     status.textContent = '🔎 AI가 정답을 두 번 확인하고 있어요…'; updateProgress();
     try {
       const body = {pin, problemId:state.active.id, problem:state.active.question, grade:state.grade, subject:state.subject,
-        provider:state.provider, model:state.model, baseUrl:state.provider === 'custom'?state.baseUrl:'', imageDataUrl:state.active.photoDataUrl};
+        provider:state.provider, model:state.model, baseUrl:state.provider === 'custom'?state.baseUrl:'', imageDataUrl:state.active.photoDataUrl, photoTextConfirmed:!!state.active.photoReviewed};
       const controller = new AbortController(), timeout = setTimeout(() => controller.abort(),110000);
       let response, data;
       try { response = await fetch('/api/answer/reveal', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:controller.signal}); data = await response.json().catch(()=>({})); }
@@ -1197,6 +1263,10 @@
   }
 
   document.querySelectorAll('[data-grade]').forEach((button) => button.addEventListener('click', () => changeGrade(button.dataset.grade)));
+  $('#photoReadConfirmBtn').addEventListener('click', confirmPhotoReview);
+  $('#photoReadCancelBtn').addEventListener('click', cancelPhotoReview);
+  $('#photoReadCloseBtn').addEventListener('click', cancelPhotoReview);
+  $('#photoReadModal').addEventListener('click', event => { if (event.target.id==='photoReadModal') cancelPhotoReview(); });
   initializePwa();
   $('#messageForm').addEventListener('submit', (event) => { event.preventDefault(); sendMessage($('#messageInput').value); });
   $('#messageInput').addEventListener('keydown', (event) => {
