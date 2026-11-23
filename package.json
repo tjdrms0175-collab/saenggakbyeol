@@ -1,13 +1,13 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.22.0",
+  "version": "1.27.0",
   "private": true,
   "type": "module",
   "description": "AI-first mobile tutor: Gemini / FreeLLMAPI with three-model Gemini quota failover, microphone transcription, and reconnect",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs && node --check hint-safety.mjs",
-    "test": "node --test tutor-engine.test.mjs router-integration.test.mjs reconnect-integration.test.mjs gemini-failover.test.mjs public-start.test.mjs hint-safety-integration.test.mjs"
+    "test": "node --test tutor-engine.test.mjs router-integration.test.mjs reconnect-integration.test.mjs gemini-failover.test.mjs public-start.test.mjs hint-safety-integration.test.mjs step-feedback-integration.test.mjs auto-subject-grade.test.mjs parent-mode.test.mjs"
   },
   "engines": {
     "node": ">=20"

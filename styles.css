@@ -202,3 +202,30 @@
   .hint-progress .understood{font-size:10px;padding:7px 6px;}
   .hint-actions .assist-button{font-size:10px;padding:8px 2px;}
 }
+
+/* v27: Compact learner interface and authenticated parent-only answer/report UI. */
+[hidden] { display: none !important; }
+.hint-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; }
+.hint-actions .assist-button { min-width: 0; white-space: nowrap; }
+.parent-gate { padding: 18px; border-radius: 18px; background: #f6f4fe; }
+.parent-gate h3, .parent-answer-section h3, .learning-insights h3, .parent-pin-section h3 { color: #454166; margin: 0 0 12px; font-size: 17px; }
+.parent-gate p { font-size: 13px; line-height: 1.8; color: #77718b; }
+.parent-gate .primary-wide { margin-top: 16px; }
+.parent-answer-section, .parent-pin-section, .learning-insights { margin: 18px 0; padding: 18px; border: 1px solid #e7e3f8; border-radius: 18px; background: #faf9ff; }
+.parent-answer-section .primary-wide { margin-top: 10px; }
+.parent-answer-section .primary-wide:disabled { background: #ddd9e8; color: #625e76; cursor: not-allowed; }
+.parent-answer-output { margin-top: 12px; padding: 17px; border: 1px solid #c1e5d7; border-radius: 14px; background: #eefaf4; font-size: 14px; line-height: 1.85; color: #36594e; white-space: pre-wrap; overflow-wrap: anywhere; }
+.insight-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 11px; }
+.insight-card { background: #f0f9f4; border-radius: 14px; padding: 14px; }
+.insight-card.needs-practice { background: #fff6e8; }
+.insight-card strong { font-size: 13.5px; color: #465b55; }
+.insight-card p { font-size: 12.5px; color: #5d6f6a; line-height: 1.75; margin: 9px 0 0; }
+.insight-card.needs-practice p { color: #806a45; }
+.insight-caution { color: #858091; font-size: 11px; line-height: 1.7; margin: 10px 0 0; }
+.parent-pin-section .field-label { margin: 12px 0 7px; }
+.parent-pin-section .teacher-preview-button { margin-top: 12px; }
+@media(max-width:550px) {
+  .parent-answer-section,.parent-pin-section,.learning-insights { padding: 13px; }
+  .insight-grid { grid-template-columns: 1fr; }
+  .hint-actions .assist-button { font-size: 12px; }
+}

@@ -26,7 +26,7 @@
       <div class="top-actions">
         <button class="header-button install-button" id="installAppBtn" type="button" aria-label="생각별을 휴대폰에 설치하는 방법">📲 <span>앱 설치</span></button>
         <span class="mode-badge" id="modeBadge"><span class="status-dot"></span> Google Gemini</span>
-        <button class="header-button settings-button" id="settingsBtn" type="button" aria-label="AI 연결 설정 열기">⚙ <span>AI 설정</span></button>
+        <button class="header-button settings-button" id="settingsBtn" type="button" aria-label="AI 연결 설정 열기" hidden tabindex="-1">⚙ <span>AI 설정</span></button>
         <button class="header-button parent-button" id="parentBtn" type="button">♧ <span>학부모 모드</span></button>
       </div>
     </header>
@@ -36,10 +36,10 @@
       <aside class="sidebar" aria-label="학습 설정">
         <div class="side-topline"><span class="mini-sparkle">✳</span> 나만의 공부 공간</div>
         <h1>오늘은 어떤 걸<br /><em>배워볼까요?</em> <span aria-hidden="true">🌈</span></h1>
-        <p class="side-subtitle">내 학년과 과목을 골라주세요. 생각별 선생님이 딱 맞는 힌트를 준비할게요!</p>
+        <p class="side-subtitle">학년만 골라주세요. 과목은 문제를 보고 AI가 알아서 판단하고, 이해하기 쉬운 힌트를 준비해요!</p>
 
         <section class="setting-section" aria-labelledby="gradeTitle">
-          <div class="section-heading"><h2 id="gradeTitle">① 나의 학년</h2><span>하나를 골라요</span></div>
+          <div class="section-heading"><h2 id="gradeTitle">나의 학년</h2><span>설명 난이도 기준</span></div>
           <div class="grade-options" id="gradeOptions" role="group" aria-label="학년 선택">
             <button class="grade-chip" data-grade="초1~2" type="button">초1~2</button>
             <button class="grade-chip" data-grade="초3~4" type="button">초3~4</button>
@@ -47,16 +47,6 @@
           </div>
         </section>
 
-        <section class="setting-section subject-section" aria-labelledby="subjectTitle">
-          <div class="section-heading"><h2 id="subjectTitle">② 공부할 과목</h2><span>언제든 바꿀 수 있어요</span></div>
-          <div class="subject-options" id="subjectOptions" role="group" aria-label="과목 선택">
-            <button type="button" class="subject-chip" data-subject="국어"><span class="subject-emoji">📖</span><span>국어</span></button>
-            <button type="button" class="subject-chip" data-subject="수학"><span class="subject-emoji">🔢</span><span>수학</span></button>
-            <button type="button" class="subject-chip" data-subject="사회"><span class="subject-emoji">🌍</span><span>사회</span></button>
-            <button type="button" class="subject-chip" data-subject="과학"><span class="subject-emoji">🔬</span><span>과학</span></button>
-            <button type="button" class="subject-chip" data-subject="영어"><span class="subject-emoji">🔤</span><span>영어</span></button>
-          </div>
-        </section>
 
         <section class="side-note" aria-label="생각별의 약속">
           <span class="note-icon">💡</span>
@@ -71,7 +61,7 @@
             <div class="avatar avatar-mini" aria-hidden="true">
               <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path d="M17 38L23 16L40 28M83 38L77 16L60 28" fill="#b6eee5" stroke="#65b5aa" stroke-width="4" stroke-linejoin="round"/><rect x="10" y="24" width="80" height="65" rx="31" fill="#b6eee5" stroke="#65b5aa" stroke-width="4"/><circle cx="33" cy="55" r="5" fill="#42576a"/><circle cx="67" cy="55" r="5" fill="#42576a"/><circle cx="22" cy="69" r="8" fill="#ffb6ad" opacity=".85"/><circle cx="78" cy="69" r="8" fill="#ffb6ad" opacity=".85"/><path d="M43 69Q50 77 57 69" stroke="#42576a" stroke-width="3.6" fill="none" stroke-linecap="round"/><path d="M49 12l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffd87e"/></svg>
             </div>
-            <div><h2 id="chatTitle">생각별 선생님 <span aria-hidden="true">✨</span></h2><p><span class="online-dot"></span> 함께 생각하는 시간 · <span id="currentClass">초3~4 · 수학</span></p></div>
+            <div><h2 id="chatTitle">생각별 선생님 <span aria-hidden="true">✨</span></h2><p><span class="online-dot"></span> 함께 생각하는 시간 · <span id="currentClass">초3~4 · 과목 자동 인식</span></p></div>
           </div>
           <button type="button" class="new-question" id="newProblemBtn">↻ <span>새 문제</span></button>
         </div>
@@ -101,7 +91,6 @@
             <div class="hint-actions" role="group" aria-label="학습 도움 버튼">
               <button id="moreHintBtn" class="assist-button hint-more" type="button" disabled aria-label="힌트 더 주세요">💡 힌트 더 받기</button>
               <button id="recheckProblemBtn" class="assist-button hint-recheck" type="button" disabled aria-label="문제 다시 읽기">🔎 문제 다시 읽기</button>
-              <button id="revealAnswerBtn" class="assist-button answer-locked" type="button" disabled aria-label="정답 보기, 힌트 5회 이후 비밀번호 필요">🔒 정답 (0/5)</button>
             </div>
           </div>
           <div id="geminiRouteNotice" class="retry-notice" role="status" aria-live="polite" hidden></div>
@@ -166,9 +155,40 @@
           <p class="connection-test-status" id="apiConnectionStatus" role="status" aria-live="polite"></p>
         </div>
       </div>
+      <div class="setting-status" id="settingStatus" role="status"></div>
+      <button id="saveSettingsBtn" type="button" class="primary-wide">설정 적용하기 ✨</button>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="parentModal" hidden>
+    <section class="modal parent-modal" role="dialog" aria-modal="true" aria-labelledby="parentTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">우리 아이의 성장 기록</span><h2 id="parentTitle">📚 학부모 모드</h2></div><button type="button" class="close-modal" data-close="parentModal" aria-label="닫기">×</button></div>
+      <div id="parentGate" class="parent-gate">
+        <h3>🔐 보호자 확인</h3>
+        <p>학습 리포트와 정답 열람은 보호자만 확인해 주세요. 보호자 비밀번호를 입력해 주세요.</p>
+        <label class="field-label" for="parentPinInput">학부모 비밀번호</label>
+        <input id="parentPinInput" class="key-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="비밀번호 입력" />
+        <p id="parentAuthStatus" class="connection-test-status" role="status" aria-live="polite"></p>
+        <button id="unlockParentBtn" type="button" class="primary-wide">학부모 모드 열기</button>
+      </div>
+      <div id="parentDashboard" hidden>
+        <p class="modal-description" id="reportDate"></p>
+        <section class="parent-answer-section" aria-labelledby="parentAnswerTitle">
+          <h3 id="parentAnswerTitle">🔓 학부모 정답 확인</h3>
+          <p class="setting-help" id="parentHintStatus">아이의 문제별 힌트가 5회 이상이면 정답을 확인할 수 있어요.</p>
+          <button id="parentRevealBtn" class="primary-wide" type="button" disabled>🔒 힌트 0/5 · 정답 잠김</button>
+          <p id="revealAnswerStatus" class="connection-test-status" role="status" aria-live="polite"></p>
+          <div id="parentAnswerOutput" class="parent-answer-output" role="status" aria-live="polite" hidden></div>
+        </section>
+      <p class="modal-description" id="reportDate"></p>
+      <div class="report-summary"><div class="report-stat"><span>질문한 문제</span><strong id="statProblems">0<small>개</small></strong></div><div class="report-stat"><span>사용한 힌트</span><strong id="statHints">0<small>회</small></strong></div><div class="report-stat"><span>정답 확인</span><strong id="statSolved">0<small>개</small></strong></div><div class="report-stat"><span>스스로 이해 표시</span><strong id="statUnderstood">0<small>개</small></strong></div></div>
+      <section class="learning-insights" aria-labelledby="insightsTitle"><h3 id="insightsTitle">🌱 오늘의 학습 관찰</h3><div class="insight-grid"><div class="insight-card"><strong>✨ 스스로 잘 해결한 부분</strong><p id="strengthInsight">학습 기록을 살펴보고 있어요.</p></div><div class="insight-card needs-practice"><strong>🌷 조금 더 연습할 부분</strong><p id="growthInsight">학습 기록을 살펴보고 있어요.</p></div></div><p class="insight-caution" id="insightCaution">이 기록은 학습 중의 시도에 대한 참고 자료이며, 지능이나 능력을 판단하지 않아요.</p></section><h3 class="report-list-title">오늘 어떤 걸 공부했나요?</h3>
+      <div id="reportList" class="report-list"></div>
+      <div class="report-bottom"><p>※ 강점과 보완점은 AI가 판정한 정답·단계 답변·힌트 사용 기록으로 계산한 관찰이며, 아이의 지능이나 학업 능력을 진단하지 않습니다. ‘이해했어요’는 아이가 직접 누른 표시이며, AI 정답 판정은 틀릴 수 있습니다. 오늘의 기록은 이 기기 브라우저에 저장됩니다. 기기를 바꾸면 자동 동기화되지 않습니다.</p><button id="clearReportBtn" type="button" class="clear-report">기록 지우기</button></div>
+
       <section class="parent-pin-section" aria-label="정답 보기 비밀번호 변경">
         <h3>🔐 정답 보기 비밀번호</h3>
-        <p class="setting-help">힌트를 5번 이상 받은 뒤 비밀번호를 입력하면 정답을 볼 수 있어요. 최초 비밀번호는 <strong>0000</strong>입니다. 처음 사용하실 때 변경해 주세요.</p>
+        <p class="setting-help">학부모 모드에 들어올 때 입력한 비밀번호를 변경할 수 있어요. 초기값은 <strong>0000</strong>이며, 안전을 위해 변경해 주세요.</p>
         <label for="oldAnswerPin" class="field-label">현재 비밀번호</label>
         <input id="oldAnswerPin" class="key-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="현재 비밀번호 (처음에는 0000)" />
         <label for="newAnswerPin" class="field-label">새 비밀번호 (숫자 4~12자리)</label>
@@ -179,31 +199,7 @@
         <p class="setting-help" id="answerPinScope">비밀번호 변경은 이 기기·브라우저에 저장돼요. 다른 기기에는 따로 설정해야 하고, 브라우저 데이터를 삭제하면 초기값으로 돌아갈 수 있어요.</p>
         <p class="connection-test-status" id="changeAnswerPinStatus" aria-live="polite" role="status"></p>
       </section>
-      <div class="setting-status" id="settingStatus" role="status"></div>
-      <button id="saveSettingsBtn" type="button" class="primary-wide">설정 적용하기 ✨</button>
-    </section>
-  </div>
-
-  <div class="modal-backdrop" id="answerModal" hidden>
-    <section class="modal answer-modal" role="dialog" aria-modal="true" aria-labelledby="answerModalTitle">
-      <div class="modal-header"><div><span class="modal-eyebrow">학습을 충분히 시도했어요</span><h2 id="answerModalTitle">🔐 정답 확인하기</h2></div><button type="button" class="close-modal" data-close="answerModal" aria-label="정답 보기 닫기">×</button></div>
-      <p class="modal-description">힌트를 5번 이상 받은 뒤 학부모가 설정한 비밀번호를 입력하면 AI가 검토한 정답을 확인할 수 있어요.</p>
-      <label class="field-label" for="revealPinInput">정답 보기 비밀번호</label>
-      <input id="revealPinInput" class="key-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="비밀번호 입력" />
-      <p class="setting-help">처음 비밀번호는 0000이며, AI 설정에서 변경할 수 있어요. 정답 검증은 AI가 수행하므로 중요한 문제는 다시 확인해 주세요.</p>
-      <p id="revealAnswerStatus" class="connection-test-status" role="status" aria-live="polite"></p>
-      <button id="confirmRevealAnswerBtn" type="button" class="primary-wide">비밀번호 확인하고 정답 보기</button>
-    </section>
-  </div>
-
-  <div class="modal-backdrop" id="parentModal" hidden>
-    <section class="modal parent-modal" role="dialog" aria-modal="true" aria-labelledby="parentTitle">
-      <div class="modal-header"><div><span class="modal-eyebrow">우리 아이의 성장 기록</span><h2 id="parentTitle">📚 오늘의 학습 리포트</h2></div><button type="button" class="close-modal" data-close="parentModal" aria-label="닫기">×</button></div>
-      <p class="modal-description" id="reportDate"></p>
-      <div class="report-summary"><div class="report-stat"><span>질문한 문제</span><strong id="statProblems">0<small>개</small></strong></div><div class="report-stat"><span>사용한 힌트</span><strong id="statHints">0<small>회</small></strong></div><div class="report-stat"><span>정답 확인</span><strong id="statSolved">0<small>개</small></strong></div><div class="report-stat"><span>스스로 이해 표시</span><strong id="statUnderstood">0<small>개</small></strong></div></div>
-      <h3 class="report-list-title">오늘 어떤 걸 공부했나요?</h3>
-      <div id="reportList" class="report-list"></div>
-      <div class="report-bottom"><p>※ ‘정답 확인’은 시스템이 명확한 답이라고 판단한 기록이고, ‘이해했어요’는 아이가 직접 누른 자기 보고입니다. AI의 자유서술형 정답 판정은 틀릴 수 있습니다. 오늘의 기록은 이 기기 브라우저에 저장됩니다. 기기를 바꾸면 자동 동기화되지 않습니다.</p><button id="clearReportBtn" type="button" class="clear-report">기록 지우기</button></div>
+      </div>
     </section>
   </div>
   <div class="modal-backdrop" id="installModal" hidden>

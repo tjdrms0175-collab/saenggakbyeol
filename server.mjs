@@ -524,6 +524,20 @@ const server = http.createServer(async (req, res) => {
       freeRouterGeminiReviewEnabled: process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && Boolean(process.env.GEMINI_API_KEY?.trim()),
       geminiRoute:geminiRouteInfo() });
   }
+  // v27: verify parent PIN server-side before the private report UI is unlocked.
+  // No browser-side hard-coded PIN comparisons; wrong attempts are throttled.
+  if (url.pathname === '/api/parent/verify' && req.method === 'POST') {
+    if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 요청이에요.'});
+    if (tooManyPinAttempts(req)) return json(res,429,{error:'입력 오류가 많아요. 10분 뒤 다시 시도해 주세요.'});
+    let body;
+    try { body=JSON.parse(await readBody(req)); }
+    catch (_) { return json(res,400,{error:'비밀번호를 확인해 주세요.'}); }
+    try {
+      if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'학부모 비밀번호가 일치하지 않아요.'}); }
+      clearPinFailures(req);
+      return json(res,200,{verified:true});
+    } catch (e) { return json(res,e.status||400,{error:e.message}); }
+  }
   if (url.pathname === '/api/answer/config' && req.method === 'GET') {
     try { return json(res, 200, {requiredHints:REQUIRED_HINTS, pinChanged:!!readAnswerPin(req), pinScope:'this-device'}); }
     catch (e) { return json(res,e.status||400,{error:e.message}); }

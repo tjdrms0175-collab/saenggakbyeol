@@ -62,8 +62,9 @@
     try { const v = JSON.parse(localStorage.getItem('thinkstar-prefs-v8') || '{}'); return v && typeof v === 'object' ? v : {}; }
     catch (_) { return {}; }
   })();
+  let parentVerifiedPin = null; // Kept in memory only while parent mode is open.
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: ['국어','수학','사회','과학','영어'].includes(savedPreferences.subject) ? savedPreferences.subject : '수학', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.5-flash-lite' : savedPreferences.model) : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.5-flash-lite' : savedPreferences.model) : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -79,7 +80,7 @@
   function savePreferences() {
     try {
       localStorage.setItem('thinkstar-prefs-v8', JSON.stringify({
-        grade: state.grade, subject: state.subject, mode: state.mode, modeVersion: 11,
+        grade: state.grade, mode: state.mode, modeVersion: 11,
         provider: state.provider, model: state.model, baseUrl: state.baseUrl
       }));
     } catch (_) { /* Storage disabled; use session only. */ }
@@ -251,18 +252,14 @@
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     });
-    document.querySelectorAll('[data-subject]').forEach((button) => {
-      const active = button.dataset.subject === state.subject;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-    $('#currentClass').textContent = `${state.grade} · ${state.subject}`;
+    $('#currentClass').textContent = `${state.grade} · ${state.detectedSubject === '자동' ? '과목 자동 인식' : state.detectedSubject}`;
     renderSamples();
   }
   function renderSamples() {
     const wrap = $('#samplePrompts');
     wrap.replaceChildren();
-    EXAMPLES[state.subject].forEach((example) => {
+    // Mix subjects; selecting a grade never restricts which questions are allowed.
+    [EXAMPLES.수학[0], EXAMPLES.과학[1], EXAMPLES.국어[0], EXAMPLES.영어[0]].forEach((example) => {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'sample-prompt';
       b.textContent = `✦ ${example}`;
@@ -270,15 +267,15 @@
       wrap.appendChild(b);
     });
   }
-  function changeCourse(nextGrade, nextSubject) {
+  function changeGrade(nextGrade) {
     if (state.busy) { showToast('선생님이 힌트를 생각하고 있어요. 잠깐 후에 바꿔주세요.'); return; }
-    if (state.grade === nextGrade && state.subject === nextSubject) return;
+    if (state.grade === nextGrade) return;
     state.grade = nextGrade;
-    state.subject = nextSubject;
+    state.detectedSubject = '자동';
     savePreferences();
     resetConversation();
     updateSelectors();
-    showToast(`${state.grade} ${SUBJECT_EMOJI[state.subject]} ${state.subject} 공부를 시작해요!`);
+    showToast(`${state.grade} 수준에 맞춰 쉽게 설명할게요!`);
   }
   function updateProgress() {
     const stars = $('#starTrack');
@@ -286,13 +283,7 @@
     stars.setAttribute('aria-label', `지금까지 힌트 ${state.hintLevel}회, 횟수 제한 없음`);
     $('#progressCounter').textContent = `${state.hintLevel}회 · 무제한`;
     $('#moreHintBtn').disabled = !state.active || state.busy;
-    const canReveal=Boolean(state.active && state.hintLevel >= 5 && !state.busy && !state.answerShown);
-    const reveal=$('#revealAnswerBtn');
-    reveal.disabled=!canReveal;
-    reveal.classList.toggle('is-unlocked',canReveal);
-    // Keep the solution button short enough for the three-column mobile toolbar.
-    reveal.textContent = state.answerShown ? '✅ 정답 확인' : canReveal ? '🔓 정답 보기' : `🔒 정답 (${Math.min(state.hintLevel,5)}/5)`;
-    reveal.setAttribute('aria-label', state.answerShown ? '정답 확인 완료' : canReveal ? '정답 보기, 보호자 비밀번호 필요' : `정답 보기 잠김, 힌트 ${Math.min(state.hintLevel,5)}회 중 5회 필요`);
+    updateParentAnswerAccess();
     $('#recheckProblemBtn').disabled = !state.active || state.busy;
     $('#understoodBtn').disabled = !state.active || state.busy;
     $('#sendBtn').disabled = state.busy;
@@ -311,6 +302,8 @@
     state.messages = [];
     state.hintLevel = 0;
     state.answerShown = false;
+    state.detectedSubject = '자동';
+    updateSelectors();
     clearPhoto();
     $('#messageInput').value = '';
     $('#chatBody').replaceChildren($('#welcomeCard'));
@@ -420,7 +413,9 @@
     state.answerShown = false;
     state.messages = [];
     const routeNotice=$('#geminiRouteNotice'); if(routeNotice) routeNotice.hidden=true;
-    state.records.push({ id, day: nowDay(), time: new Date().toISOString(), grade: state.grade, subject: state.subject, question: question || '사진으로 올린 문제', hints: 0, understood: false, solved: false, revealed: false });
+    state.detectedSubject = '자동';
+    updateSelectors();
+    state.records.push({ id, day: nowDay(), time: new Date().toISOString(), grade: state.grade, subject: '자동', question: question || '사진으로 올린 문제', hints: 0, understood: false, solved: false, revealed: false, stepCorrect: 0, wrongAttempts: 0, assessedAttempts: 0, hintsAtSolve: null });
     saveRecords();
   }
   function updateRecord(changes) {
@@ -619,7 +614,7 @@
       problemId:state.active?.id||'', attemptText, recheck,
       problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null
     });
-    return { hint:result.hint.trim(), problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
+    return { hint:result.hint.trim(), detectedSubject: ['국어','수학','사회','과학','영어','기타'].includes(result.detectedSubject) ? result.detectedSubject : '자동', problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
       verdict:['correct','incorrect','step_correct'].includes(result.verdict)?result.verdict:'uncertain',
       hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel,
       usedModel:typeof result.model==='string'?result.model:'', geminiRoute:result.geminiRoute||null };
@@ -657,12 +652,26 @@
       const attemptText = !isNew && !fromHintButton && !fromRecheck && typed ? typed : '';
       const reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText, fromRecheck);
       state.hintLevel = reply.hintCount;
+      if (reply.detectedSubject !== '자동') {
+        state.detectedSubject = reply.detectedSubject;
+        updateSelectors();
+        updateRecord({ subject: reply.detectedSubject });
+      }
       showGeminiRouteNotice(reply);
       pending.remove();
       visibleReply = addMessage('teacher', reply.hint, { focus: reply.problemFocus });
       state.messages.push({ role: 'assistant', content: reply.hint });
+      const record = state.records.find((r) => r.id === state.active?.id);
+      if (attemptText && record) {
+        if (reply.verdict === 'correct' || reply.verdict === 'step_correct' || reply.verdict === 'incorrect') {
+          const changes = { assessedAttempts: (record.assessedAttempts || 0) + 1 };
+          if (reply.verdict === 'step_correct') changes.stepCorrect = (record.stepCorrect || 0) + 1;
+          if (reply.verdict === 'incorrect') changes.wrongAttempts = (record.wrongAttempts || 0) + 1;
+          updateRecord(changes);
+        }
+      }
       if (reply.verdict === 'correct') {
-        updateRecord({ solved: true });
+        updateRecord({ solved: true, hints: state.hintLevel, hintsAtSolve: state.hintLevel });
         state.active = null;
         state.messages = [];
         showToast('🎉 스스로 문제를 맞혔어요! 새로운 문제도 풀어 볼까요?');
@@ -728,35 +737,76 @@
     $('#photoPreview').hidden = true;
     $('#photoInput').value = '';
   }
+  function resetParentSession() {
+    parentVerifiedPin = null;
+    $('#parentGate').hidden = false;
+    $('#parentDashboard').hidden = true;
+    $('#parentPinInput').value = '';
+    $('#parentAuthStatus').textContent = '';
+    $('#parentAnswerOutput').hidden = true;
+    $('#parentAnswerOutput').replaceChildren();
+    $('#revealAnswerStatus').textContent = '';
+    $('#oldAnswerPin').value = '';
+    $('#newAnswerPin').value = '';
+    $('#newAnswerPinConfirm').value = '';
+    $('#changeAnswerPinStatus').textContent = '';
+  }
   function openModal(id) {
+    if (id === 'settingsModal') return; // Child-facing AI configuration has been hidden since v27.
     const modal = $(`#${id}`);
+    if (id === 'parentModal') resetParentSession();
     modal.hidden = false;
-    if (id === 'settingsModal') {
-      $(`input[name="mode"][value="${state.mode}"]`).checked = true;
-      $('#apiProviderSelect').value = state.provider;
-      $('#apiModelInput').value = state.provider==='gemini'?'gemini-3.5-flash-lite':state.model;
-      $('#apiBaseUrlInput').value = state.baseUrl;
-      syncProviderFields();
-      $('#settingStatus').textContent = '';
-      $('#oldAnswerPin').value = '';
-      $('#newAnswerPin').value = '';
-      $('#newAnswerPinConfirm').value = '';
-      $('#changeAnswerPinStatus').textContent = '';
-      refreshAnswerPinStatus();
-    } else if (id === 'answerModal') {
-      $('#revealPinInput').value = '';
-      $('#revealAnswerStatus').textContent = '';
-    } else if (id === 'parentModal') renderReport();
     document.body.style.overflow = 'hidden';
-    (id === 'answerModal' ? $('#revealPinInput') : modal.querySelector('.close-modal')).focus();
+    (id === 'parentModal' ? $('#parentPinInput') : modal.querySelector('.close-modal')).focus({preventScroll:true});
   }
   function closeModal(id, { restoreFocus = true } = {}) {
     $(`#${id}`).hidden = true;
     document.body.style.overflow = '';
-    // Restoring focus to the answer button after revealing a solution scrolls
-    // Android back down to the controls; skip it when displaying a reply.
-    if (restoreFocus) {
-      (id === 'settingsModal' ? $('#settingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus({preventScroll:true});
+    if (id === 'parentModal') resetParentSession();
+    if (restoreFocus) $('#parentBtn').focus({preventScroll:true});
+  }
+  async function unlockParentMode() {
+    const pin = $('#parentPinInput').value.trim();
+    const status = $('#parentAuthStatus');
+    const button = $('#unlockParentBtn');
+    if (!/^\d{4,12}$/.test(pin)) { status.textContent = '숫자 4~12자리 비밀번호를 입력해 주세요.'; return; }
+    button.disabled = true;
+    status.textContent = '보호자 비밀번호를 확인하고 있어요…';
+    try {
+      const response = await fetch('/api/parent/verify', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pin})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.verified !== true) throw Error(data.error || '비밀번호 확인에 실패했어요.');
+      parentVerifiedPin = pin;
+      $('#parentPinInput').value = '';
+      $('#parentGate').hidden = true;
+      $('#parentDashboard').hidden = false;
+      status.textContent = '';
+      renderReport();
+      updateParentAnswerAccess();
+      refreshAnswerPinStatus();
+    } catch (error) {
+      status.textContent = `❌ ${error.message}`;
+      parentVerifiedPin = null;
+    } finally { button.disabled = false; }
+  }
+  function updateParentAnswerAccess() {
+    const button = $('#parentRevealBtn');
+    if (!button) return;
+    const hints = Math.min(5, state.hintLevel);
+    const canShow = !!(state.active && state.hintLevel >= 5 && !state.busy && parentVerifiedPin && !state.answerShown);
+    button.disabled = !canShow;
+    button.textContent = state.answerShown ? '✅ 이미 확인한 정답' : canShow ? '🔓 정답과 풀이 확인하기' : `🔒 힌트 ${hints}/5 · 정답 잠김`;
+    $('#parentHintStatus').textContent = !state.active
+      ? '현재 진행 중인 문제가 없어요. 아이가 문제를 시작하면 여기에서 확인할 수 있어요.'
+      : state.answerShown ? '이번 문제의 정답을 보호자가 확인했어요.'
+      : state.hintLevel < 5 ? `현재 힌트 ${state.hintLevel}회예요. 같은 문제에서 ${5-state.hintLevel}회 더 받은 뒤 열 수 있어요.`
+      : '힌트 5회 조건을 충족했어요. 아래 버튼에서 보호자가 정답을 확인할 수 있어요.';
+    const output = $('#parentAnswerOutput');
+    if (parentVerifiedPin && state.active?.revealedAnswer) {
+      output.textContent = state.active.revealedAnswer;
+      output.hidden = false;
     }
   }
   function updateMode() {
@@ -843,6 +893,7 @@
       const response=await fetch('/api/answer/change-pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPin,newPin})});
       const data=await response.json();
       if (!response.ok) throw Error(data.error || '변경에 실패했어요.');
+      parentVerifiedPin = newPin; // Authenticated parent remains in the current modal only.
       status.textContent='✅ 새 비밀번호로 변경했어요. 이 기기에만 적용됩니다.';
       $('#oldAnswerPin').value='';$('#newAnswerPin').value='';$('#newAnswerPinConfirm').value='';
       refreshAnswerPinStatus();
@@ -850,30 +901,30 @@
     finally { button.disabled=false; }
   }
   async function revealAnswer() {
-    if (!state.active || state.hintLevel<5 || state.answerShown || state.busy) return;
-    const pin=$('#revealPinInput').value.trim(),status=$('#revealAnswerStatus'),button=$('#confirmRevealAnswerBtn');
-    if (!/^\d{4,12}$/.test(pin)) { status.textContent='숫자 4~12자리 비밀번호를 입력해 주세요.'; return; }
-    state.busy=true;button.disabled=true;status.textContent='🔎 AI가 정답을 두 번 확인하고 있어요…';updateProgress();
+    if (!parentVerifiedPin || !state.active || state.hintLevel < 5 || state.answerShown || state.busy) return;
+    const pin = parentVerifiedPin;
+    const status = $('#revealAnswerStatus'), button = $('#parentRevealBtn');
+    state.busy = true; button.disabled = true;
+    status.textContent = '🔎 AI가 정답을 두 번 확인하고 있어요…'; updateProgress();
     try {
-      const body={pin,problemId:state.active.id,problem:state.active.question,grade:state.grade,subject:state.subject,
-        provider:state.provider,model:state.model,baseUrl:state.provider==='custom'?state.baseUrl:'',imageDataUrl:state.active.photoDataUrl};
-      const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),110000);
-      let response,data;
-      try { response=await fetch('/api/answer/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal}); data=await response.json().catch(()=>({})); }
+      const body = {pin, problemId:state.active.id, problem:state.active.question, grade:state.grade, subject:state.subject,
+        provider:state.provider, model:state.model, baseUrl:state.provider === 'custom'?state.baseUrl:'', imageDataUrl:state.active.photoDataUrl};
+      const controller = new AbortController(), timeout = setTimeout(() => controller.abort(),110000);
+      let response, data;
+      try { response = await fetch('/api/answer/reveal', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:controller.signal}); data = await response.json().catch(()=>({})); }
       finally { clearTimeout(timeout); }
       if (!response.ok) throw Error(data.error || `서버 오류 (${response.status})`);
-      if (typeof data.answer!=='string' || !data.answer.trim()) throw Error('AI 정답을 확인하지 못했어요.');
-      const msg=`🔐 학부모 확인 후 공개한 정답: ${data.answer.trim()}${data.explanation?'\n\n풀이 설명: '+data.explanation:''}`;
-      const revealedMessage = addMessage('teacher',msg);
-      state.messages.push({role:'assistant',content:'보호자 확인 후 정답이 공개됐어요.'});
-      state.answerShown=true;
+      if (typeof data.answer !== 'string' || !data.answer.trim()) throw Error('AI 정답을 확인하지 못했어요.');
+      const msg = `학부모 확인 정답: ${data.answer.trim()}${data.explanation?'\n\n풀이 설명: '+data.explanation:''}`;
+      state.active.revealedAnswer = msg; // Only in memory, never appended to the child's chat.
+      state.answerShown = true;
       updateRecord({revealed:true});
-      $('#revealPinInput').value='';
-      closeModal('answerModal',{restoreFocus:false});
-      revealNewTutorReply(revealedMessage);
-      showToast('🔐 보호자 확인 후 정답을 공개했어요.');
-    } catch(error) { status.textContent=error.name==='AbortError'?'정답 확인 요청이 너무 오래 걸렸어요. 다시 시도해 주세요.':`❌ ${error.message}`; }
-    finally {state.busy=false;button.disabled=false;updateProgress();}
+      $('#parentAnswerOutput').textContent = msg;
+      $('#parentAnswerOutput').hidden = false;
+      status.textContent = '✅ 학부모 화면에서만 정답을 표시했어요.';
+      renderReport();
+    } catch(error) { status.textContent = error.name === 'AbortError' ? '요청 시간이 오래 걸렸어요. 다시 시도해 주세요.' : `❌ ${error.message}`; }
+    finally { state.busy = false; updateProgress(); }
   }
   function renderReport() {
     const todayRecords = state.records.filter((r) => r.day === nowDay());
@@ -882,6 +933,31 @@
     $('#statHints').firstChild.textContent = String(todayRecords.reduce((sum, r) => sum + (r.hints || 0), 0));
     $('#statSolved').firstChild.textContent = String(todayRecords.filter((r) => r.solved).length);
     $('#statUnderstood').firstChild.textContent = String(todayRecords.filter((r) => r.understood).length);
+    const groups = new Map();
+    for (const r of todayRecords) {
+      const subject = ['국어','수학','사회','과학','영어'].includes(r.subject) ? r.subject : '미분류';
+      const stats = groups.get(subject) || {problems:0, solved:0, steps:0, wrong:0, needsHelp:0};
+      stats.problems += 1;
+      stats.solved += r.solved ? 1 : 0;
+      stats.steps += Number(r.stepCorrect || 0);
+      stats.wrong += Number(r.wrongAttempts || 0);
+      if (!r.solved && (r.hints || 0) >= 3) stats.needsHelp += 1;
+      groups.set(subject, stats);
+    }
+    const evidence = [...groups].filter(([subject]) => subject !== '미분류');
+    const stronger = evidence.filter(([,s]) => s.solved > 0 || s.steps > 0)
+      .sort((a,b) => (b[1].solved*3+b[1].steps)-(a[1].solved*3+a[1].steps))[0];
+    const needsHelp = evidence.filter(([,s]) => s.wrong > 0 || s.needsHelp > 0)
+      .sort((a,b) => (b[1].wrong+b[1].needsHelp)-(a[1].wrong+a[1].needsHelp))[0];
+    $('#strengthInsight').textContent = stronger
+      ? `${stronger[0]}: 최종 정답 ${stronger[1].solved}문제${stronger[1].steps ? `, 중간 단계 정답 ${stronger[1].steps}회` : ''}를 스스로 찾아냈어요.`
+      : '아직 스스로 맞힌 기록이 충분하지 않아요. 다음에 아이가 직접 답해 볼 기회를 주세요.';
+    $('#growthInsight').textContent = needsHelp
+      ? `${needsHelp[0]}: 답을 다시 시도한 횟수 ${needsHelp[1].wrong}회, 힌트 3회 이상 사용한 미해결 문제 ${needsHelp[1].needsHelp}개가 있었어요. 어느 단계에서 어려웠는지 함께 살펴보세요.`
+      : '반복해서 막힌 기록이 뚜렷하지 않아요. 지금은 여러 유형의 문제를 고르게 시도해 보세요.';
+    $('#insightCaution').textContent = todayRecords.length < 3
+      ? `오늘 기록은 ${todayRecords.length}문제로 아직 적어요. 강점·약점을 단정하지 않고 관찰한 풀이 과정만 표시합니다.`
+      : 'AI의 정오 판정이 틀릴 수 있어요. 이 내용은 오늘의 풀이 경향일 뿐 아이의 능력·지능 평가가 아닙니다.';
     const list = $('#reportList'); list.replaceChildren();
     if (!todayRecords.length) {
       const empty = document.createElement('div');
@@ -894,7 +970,7 @@
       const wrapper = document.createElement('article'); wrapper.className = 'report-entry';
       const top = document.createElement('div'); top.className = 'report-entry-top';
       const date = document.createElement('span');
-      date.textContent = `${record.grade} · ${SUBJECT_EMOJI[record.subject] || '📚'} ${record.subject} · ${new Date(record.time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · 힌트 ${record.hints}회`;
+      date.textContent = `${record.grade} · ${record.subject && record.subject !== '자동' ? `${SUBJECT_EMOJI[record.subject] || '📚'} ${record.subject} · ` : ''}${new Date(record.time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} · 힌트 ${record.hints}회`;
       const status = document.createElement('strong');
       status.textContent = record.solved ? '✅ 스스로 정답' : record.revealed ? '🔓 보호자 정답 열람' : record.understood ? '🌟 이해 표시' : '💭 생각 중';
       status.className = record.solved || record.understood ? 'self-reported' : 'pending';
@@ -905,17 +981,16 @@
     });
   }
 
-  document.querySelectorAll('[data-grade]').forEach((button) => button.addEventListener('click', () => changeCourse(button.dataset.grade, state.subject)));
-  document.querySelectorAll('[data-subject]').forEach((button) => button.addEventListener('click', () => changeCourse(state.grade, button.dataset.subject)));
+  document.querySelectorAll('[data-grade]').forEach((button) => button.addEventListener('click', () => changeGrade(button.dataset.grade)));
   initializePwa();
   $('#messageForm').addEventListener('submit', (event) => { event.preventDefault(); sendMessage($('#messageInput').value); });
   $('#messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage($('#messageInput').value); }
   });
   $('#moreHintBtn').addEventListener('click', () => sendMessage('힌트를 하나 더 주세요.', { fromHintButton: true }));
-  $('#revealAnswerBtn').addEventListener('click',()=>{if (state.active && state.hintLevel>=5 && !state.busy && !state.answerShown) openModal('answerModal');});
-  $('#confirmRevealAnswerBtn').addEventListener('click',revealAnswer);
-  $('#revealPinInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();revealAnswer();}});
+  $('#parentRevealBtn').addEventListener('click',revealAnswer);
+  $('#unlockParentBtn').addEventListener('click',unlockParentMode);
+  $('#parentPinInput').addEventListener('keydown',e=>{ if (e.key==='Enter') {e.preventDefault();unlockParentMode();} });
   $('#changeAnswerPinBtn').addEventListener('click',changeAnswerPin);
   $('#recheckProblemBtn').addEventListener('click', () => sendMessage('문제를 다시 읽어 주세요.', { fromRecheck: true }));
   $('#understoodBtn').addEventListener('click', markUnderstood);
@@ -924,7 +999,7 @@
   $('#removePhotoBtn').addEventListener('click', clearPhoto);
   document.querySelectorAll('input[name="mode"]').forEach((input) => input.addEventListener('change', () => syncProviderFields()));
   $('#apiProviderSelect').addEventListener('change', () => syncProviderFields({ switched: true }));
-  $('#settingsBtn').addEventListener('click', () => openModal('settingsModal'));
+  // Settings are hidden from children; API keys remain exclusively on Render.
   $('#parentBtn').addEventListener('click', () => openModal('parentModal'));
   $('#saveSettingsBtn').addEventListener('click', saveSettings);
   $('#testApiConnectionBtn').addEventListener('click', testApiConnection);
