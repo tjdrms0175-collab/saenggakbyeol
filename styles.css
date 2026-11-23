@@ -238,3 +238,17 @@
 .photo-chooser button{width:100%;padding:12px;text-align:left;font-size:13px;font-weight:750;color:#5f518e;background:#f7f5ff;border-radius:9px;white-space:nowrap}
 .photo-chooser button:focus-visible,.photo-chooser button:hover{outline:2px solid #a99af5;background:#ede8ff}
 @media(max-width:385px){.photo-picker-area .upload-button{padding:8px 9px}}
+
+/* v33: Camera is captured in-page, with native picker fallback. */
+.capture-backdrop{z-index:45;padding:max(10px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom))}
+.camera-capture-panel{width:min(100%,520px);max-height:calc(100dvh - 24px);overflow:auto;padding:20px}
+.camera-explanation{font-size:13px;color:#77738a;line-height:1.6;margin:10px 0}
+.camera-video-area{position:relative;width:100%;height:min(48dvh,420px);min-height:210px;background:#202333;border-radius:16px;overflow:hidden}
+.camera-video-area video{display:block;width:100%;height:100%;object-fit:contain;background:#202333}
+.camera-video-placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:20px;color:white;text-align:center;background:#202333c9;font-size:13px}
+.camera-status{font-size:12px;color:#565775;line-height:1.6;margin:10px 0 14px;min-height:20px}
+.camera-control-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.camera-control-buttons button{border-radius:12px;padding:13px 7px;min-height:44px;font-weight:850;font-size:12px}
+.camera-snap-button{grid-column:1/-1;background:#7768df;color:white;font-size:15px!important}
+.camera-native-button{background:#f2efff;color:#6557a7}
+@media(max-width:390px){.camera-capture-panel{padding:14px}.camera-control-buttons button{font-size:11px}.camera-video-area{min-height:190px}}

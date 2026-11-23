@@ -767,8 +767,10 @@
     revealNewTutorReply(confirmation);
     showToast('오늘의 공부 기록에 반짝 별이 추가됐어요! ✨');
   }
-  // v32: Explicit camera vs gallery. capture=environment asks Android to open
-  // the rear camera; selected photos are attached locally before the child sends.
+  // v33: In-page video capture works without relying on Android's file-return intent.
+  // Use the native camera file picker only as an explicit, user-initiated fallback.
+  let cameraStream = null;
+  let cameraOpenRequest = 0;
   function closePhotoMenu() {
     const menu = $('#photoChooser');
     if (menu) menu.hidden = true;
@@ -785,7 +787,111 @@
     if (state.busy) return;
     const input = camera ? $('#cameraInput') : $('#photoInput');
     input.value = '';
-    input.click(); // Must run directly within the user's click for Android capture intents.
+    input.click();
+  }
+  function stopCameraTracks() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+    }
+    const video = $('#cameraLiveVideo');
+    video.pause();
+    video.srcObject = null;
+    $('#cameraSnapBtn').disabled = true;
+  }
+  function closeCameraCapture() {
+    cameraOpenRequest++;
+    stopCameraTracks();
+    $('#cameraCaptureModal').hidden = true;
+    // Avoid focusing the question box (Android would open the keyboard and hide the photo).
+  }
+  async function startCameraCapture() {
+    closePhotoMenu();
+    if (state.busy) return;
+    const modal = $('#cameraCaptureModal');
+    modal.hidden = false;
+    const session = ++cameraOpenRequest;
+    stopCameraTracks();
+    $('#cameraVideoPlaceholder').hidden = false;
+    $('#cameraVideoPlaceholder').textContent = '카메라를 연결하고 있어요…';
+    $('#cameraStatus').textContent = '카메라 권한 요청이 나타나면 허용해 주세요.';
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      $('#cameraStatus').textContent = '이 앱에서 카메라 직접 열기를 지원하지 않아요. 아래 카메라 앱 또는 앨범 버튼을 이용해 주세요.';
+      $('#cameraVideoPlaceholder').textContent = '카메라 직접 열기 미지원';
+      return;
+    }
+    try {
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:960}},audio:false});
+      } catch (error) {
+        if (error.name !== 'OverconstrainedError' && error.name !== 'NotFoundError') throw error;
+        stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+      }
+      if (session !== cameraOpenRequest || modal.hidden) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      cameraStream = stream;
+      const video = $('#cameraLiveVideo');
+      video.srcObject = stream;
+      try { await video.play(); } catch (_) { /* Some browsers play automatically once metadata arrives. */ }
+      if (session !== cameraOpenRequest || modal.hidden) return;
+      $('#cameraVideoPlaceholder').hidden = true;
+      $('#cameraStatus').textContent = '문제를 화면 안에 맞추고 촬영해서 첨부를 눌러 주세요.';
+      $('#cameraSnapBtn').disabled = false;
+    } catch (error) {
+      if (session !== cameraOpenRequest) return;
+      const denied = ['NotAllowedError','SecurityError','PermissionDeniedError'].includes(error?.name);
+      $('#cameraStatus').textContent = denied
+        ? '카메라 권한이 거부됐어요. 갤럭시 설정과 브라우저 사이트 권한을 확인하거나 아래 앨범에서 선택해 주세요.'
+        : '카메라를 직접 열지 못했어요. 휴대폰 카메라 앱이나 앨범에서 선택해 주세요.';
+      $('#cameraVideoPlaceholder').textContent = '카메라를 사용할 수 없어요';
+    }
+  }
+  function makePhotoDataUrl(canvas) {
+    let quality = .85;
+    let result = '';
+    for (let attempt=0;attempt<8;attempt++) {
+      result = canvas.toDataURL('image/jpeg', quality);
+      if (result.startsWith('data:image/jpeg') && result.length <= 4*1024*1024) return result;
+      quality = Math.max(.32, quality-.10);
+      if (quality <= .33 && (canvas.width>400 || canvas.height>400)) {
+        const next = document.createElement('canvas');
+        next.width = Math.max(1,Math.floor(canvas.width*.74));
+        next.height = Math.max(1,Math.floor(canvas.height*.74));
+        next.getContext('2d').drawImage(canvas,0,0,next.width,next.height);
+        canvas.width = next.width;canvas.height = next.height;
+        canvas.getContext('2d').drawImage(next,0,0);
+      }
+    }
+    throw Error('image-too-large');
+  }
+  function attachPhotoDataUrl(dataUrl, origin) {
+    state.photo = {dataUrl};
+    $('#photoThumbnail').src = dataUrl;
+    $('#photoPreview').hidden = false;
+    voiceNotice('✅ 사진이 첨부됐어요. 사진을 확인하고 보내기를 눌러 주세요.', 'success');
+    showToast(origin === 'camera' ? '📷 촬영 사진이 첨부됐어요! 이제 보내기를 눌러 주세요.' : '🖼️ 사진을 첨부했어요! 이제 보내기를 눌러 주세요.');
+  }
+  function snapInAppCamera() {
+    const video=$('#cameraLiveVideo');
+    if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+      $('#cameraStatus').textContent = '카메라 화면을 불러오는 중이에요. 화면이 보이면 다시 눌러 주세요.';
+      return;
+    }
+    try {
+      const canvas=document.createElement('canvas');
+      const scale=Math.min(1,1500/Math.max(video.videoWidth,video.videoHeight));
+      canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+      canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+      canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+      const dataUrl=makePhotoDataUrl(canvas);
+      closeCameraCapture();
+      attachPhotoDataUrl(dataUrl,'camera');
+    } catch (error) {
+      $('#cameraStatus').textContent = '촬영한 사진을 처리하지 못했어요. 앨범에서 선택하거나 다시 촬영해 주세요.';
+    }
   }
   async function decodePhoto(file) {
     // Some Samsung browsers/WebViews support file input but not createImageBitmap.
@@ -827,20 +933,8 @@
       if (!ctx) throw Error('canvas-unavailable');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
-      // Keep the image under the server's 4 MB data-url limit even with large cameras.
-      let dataUrl = '';
-      for (let quality of [.86,.76,.64,.50]) {
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
-        if (dataUrl.length <= 4 * 1024 * 1024) break;
-      }
-      if (!dataUrl.startsWith('data:image/jpeg') || dataUrl.length > 4*1024*1024) {
-        showToast('사진을 작게 만들지 못했어요. 화질을 낮춰 다시 촬영해 주세요.'); return;
-      }
-      state.photo = { dataUrl };
-      $('#photoThumbnail').src = dataUrl;
-      $('#photoPreview').hidden = false;
-      voiceNotice('✅ 사진이 첨부됐어요. 내용을 확인하고 보내기를 눌러 주세요.', 'success');
-      showToast(origin === 'camera' ? '📷 촬영한 사진을 첨부했어요. 보내기를 눌러 주세요!' : '🖼️ 사진을 첨부했어요. 보내기를 눌러 주세요!');
+      const dataUrl = makePhotoDataUrl(canvas);
+      attachPhotoDataUrl(dataUrl, origin);
     } catch (error) {
       voiceNotice('사진을 읽지 못했어요. 다른 사진이나 JPG 촬영 모드를 사용해 주세요.', 'error');
       showToast('사진을 읽지 못했어요. 카메라가 HEIC 형식이면 JPG로 변경해 주세요.');
@@ -1117,8 +1211,15 @@
   $('#understoodBtn').addEventListener('click', markUnderstood);
   $('#newProblemBtn').addEventListener('click', () => { if (!state.busy) { resetConversation(); $('#messageInput').focus(); } });
   $('#photoMenuBtn').addEventListener('click', togglePhotoMenu);
-  $('#takePhotoBtn').addEventListener('click', () => openDevicePhotoPicker(true));
+  $('#takePhotoBtn').addEventListener('click', startCameraCapture);
   $('#choosePhotoBtn').addEventListener('click', () => openDevicePhotoPicker(false));
+  $('#cameraSnapBtn').addEventListener('click', snapInAppCamera);
+  $('#cameraCloseBtn').addEventListener('click', closeCameraCapture);
+  $('#cameraCaptureModal').addEventListener('click', event => { if (event.target.id === 'cameraCaptureModal') closeCameraCapture(); });
+  $('#cameraNativeBtn').addEventListener('click', () => {closeCameraCapture();openDevicePhotoPicker(true);});
+  $('#cameraGalleryBtn').addEventListener('click', () => {closeCameraCapture();openDevicePhotoPicker(false);});
+  document.addEventListener('keydown', event => {if (event.key==='Escape' && !$('#cameraCaptureModal').hidden) closeCameraCapture();});
+  window.addEventListener('pagehide', stopCameraTracks);
   $('#cameraInput').addEventListener('change', event => prepareImage(event.target.files?.[0], 'camera'));
   $('#photoInput').addEventListener('change', event => prepareImage(event.target.files?.[0], 'gallery'));
   document.addEventListener('click', event => { if (!event.target.closest('#photoPickerArea')) closePhotoMenu(); });

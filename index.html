@@ -218,5 +218,26 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- v33: Use in-page camera instead of depending on Android camera intent returning a file. -->
+  <div class="modal-backdrop capture-backdrop" id="cameraCaptureModal" hidden>
+    <section class="modal camera-capture-panel" role="dialog" aria-modal="true" aria-labelledby="cameraTitle">
+      <div class="modal-header">
+        <div><span class="modal-eyebrow">문제집 촬영</span><h2 id="cameraTitle">📷 사진 찍기</h2></div>
+        <button type="button" class="close-modal" id="cameraCloseBtn" aria-label="카메라 닫기">×</button>
+      </div>
+      <p class="camera-explanation">문제 글자가 잘 보이도록 밝은 곳에서 찍어 주세요.</p>
+      <div class="camera-video-area" id="cameraVideoArea">
+        <video id="cameraLiveVideo" playsinline autoplay muted aria-label="휴대폰 카메라 미리보기"></video>
+        <div class="camera-video-placeholder" id="cameraVideoPlaceholder">카메라를 연결하고 있어요…</div>
+      </div>
+      <p id="cameraStatus" class="camera-status" role="status" aria-live="polite">카메라 사용 권한을 요청할 수 있어요.</p>
+      <div class="camera-control-buttons">
+        <button type="button" id="cameraSnapBtn" class="camera-snap-button" disabled>📸 촬영해서 첨부</button>
+        <button type="button" id="cameraNativeBtn" class="camera-native-button">휴대폰 카메라 앱 열기</button>
+        <button type="button" id="cameraGalleryBtn" class="camera-native-button">앨범에서 선택</button>
+      </div>
+    </section>
+  </div>
 </body>
 </html>
