@@ -28,8 +28,8 @@ function request(base, requestId=uid) {return fetch(base+'/api/tutor', {method:'
 function reply(raw){
   const ins=JSON.parse(raw).messages[0].content;
   return ins.includes('[독립 검토자 역할]')
-    ? {approved:true,focus:'두 수의 공약수 비교',safe_hint:hint,verdict:'uncertain',reason:'원문 일치'}
-    : {focus:'두 수의 공약수 비교',given_facts:['12와 18'],child_intent:'ask_hint',verdict:'uncertain',hint};
+    ? {approved:true,focus:'두 수의 공약수 비교',safe_hint:hint,verdict:'uncertain',reason:'원문 일치',private_final_answer:'6',answer_aliases:[],safe_to_show:true,contains_answer:false,contains_complete_solution:false}
+    : {focus:'두 수의 공약수 비교',given_facts:['12와 18'],child_intent:'ask_hint',verdict:'uncertain',hint,private_final_answer:'6',answer_aliases:[],step_goal:'약수 알아보기'};
 }
 test('503 is preserved and marked retryable; same request recovers and is never counted twice',async t=>{
   let calls=0;
