@@ -67,7 +67,7 @@ function aiQuotaExceeded(req) {
   return null;
 }
 
-const HINT_ENGINE_VERSION = 'v34-photo-text-confirmation-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v36-cost-optimized-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -185,7 +185,7 @@ function readBody(req) {
 // Official native APIs and documented OpenAI-compatible Chat Completions endpoints.
 // The UI allows an explicit model name because available models change over time.
 const API_PROVIDERS = Object.freeze({
-  gemini: { name: 'Google Gemini', kind: 'gemini', env: 'GEMINI_API_KEY', model: 'gemini-3.5-flash-lite' },
+  gemini: { name: 'Google Gemini', kind: 'gemini', env: 'GEMINI_API_KEY', model: 'gemini-3.1-flash-lite' },
   freellmapi: { name: 'FreeLLMAPI (개인 실험용)', kind: 'chat', env: 'FREELLMAPI_API_KEY', model: 'auto:smart' },
   openai: { name: 'OpenAI', kind: 'chat', env: 'OPENAI_API_KEY', model: 'gpt-4.1-mini', base: 'https://api.openai.com/v1' },
   anthropic: { name: 'Anthropic Claude', kind: 'anthropic', env: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-5' },
@@ -200,7 +200,44 @@ const API_PROVIDERS = Object.freeze({
 const safeProviderModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9_.:\/+\-]{1,145}$/.test(s);
 // Gemini text models in user-specified priority. TTS is intentionally disabled.
 // Each model is tried only if it is not temporarily paused by its own 429.
-const GEMINI_MODELS = Object.freeze(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash']);
+const GEMINI_MODELS = Object.freeze(['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']);
+
+// Cost controls: output limits are per response *stage*, not a fixed 2000 for
+// every simple verdict. The safety review is still called independently.
+// Keep adequate room for JSON, including internal (never displayed) answer.
+const GEMINI_STAGE_MAX_TOKENS = Object.freeze({
+  'photo-read': 1700,
+  'draft': 1450,
+  'review': 1250,
+  'answer-draft': 750,
+  'answer-review': 500,
+});
+function modelTokenBudget(stage) {
+  return GEMINI_STAGE_MAX_TOKENS[stage] || 1450;
+}
+function modelThinkingLevel(model) {
+  // Flash-Lite supports MINIMAL. Flash 3.8 uses LOW to preserve reasoning on
+  // difficult problems while avoiding default high thinking effort.
+  return model === 'gemini-3.8-flash' ? 'low' : 'minimal';
+}
+// Operator-only accounting: aggregate metadata, no photos, prompts or answers.
+// Logs are approximate API reports, not a substitute for AI Studio billing.
+const geminiTokenTotals = new Map();
+function recordGeminiTokens(model, stage, metadata) {
+  if (!metadata || typeof metadata !== 'object') return;
+  const input = Math.max(0,Number(metadata.promptTokenCount)||0);
+  const output = Math.max(0,Number(metadata.candidatesTokenCount)||0);
+  const thinking = Math.max(0,Number(metadata.thoughtsTokenCount)||0);
+  const total = Math.max(0,Number(metadata.totalTokenCount)||input+output+thinking);
+  const key = `${model}/${stage}`;
+  const old = geminiTokenTotals.get(key) || { calls:0,input:0,output:0,thinking:0,total:0 };
+  const next = {calls:old.calls+1,input:old.input+input,output:old.output+output,
+    thinking:old.thinking+thinking,total:old.total+total};
+  geminiTokenTotals.set(key,next);
+  if (process.env.GEMINI_USAGE_LOG !== '0')
+    console.info(`[gemini-usage] model=${model} stage=${stage} input=${input} output=${output} thinking=${thinking} total=${total}`);
+}
+
 const GEMINI_COOLDOWN_MS = process.env.NODE_ENV === 'test' && process.env.GEMINI_TEST_COOLDOWN_MS
   ? Math.max(1, Number(process.env.GEMINI_TEST_COOLDOWN_MS) || 1) : 15 * 60_000;
 const geminiPauseUntil = new Map();
@@ -318,7 +355,7 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
     body = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: 'user', parts: [{ text: humanPayload }, ...(image ? [{ inline_data: { mime_type: image.mime, data: image.data } }] : [])] }],
-      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 2000, temperature: stage.endsWith('review') ? 0.1 : stage === 'answer-draft' ? 0.2 : 0.35 },
+      generationConfig: { responseMimeType: 'application/json', maxOutputTokens: modelTokenBudget(stage), temperature: stage.endsWith('review') ? 0.1 : stage === 'answer-draft' ? 0.2 : 0.35, thinkingConfig: { thinkingLevel: modelThinkingLevel(model) } },
     };
   } else if (details.kind === 'anthropic') {
     endpoint = 'https://api.anthropic.com/v1/messages';
@@ -382,6 +419,7 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
     throw new TutorEngineError('AI의 응답 형식을 읽지 못했어요.', 502);
   }
   let raw;
+  if (details.kind === 'gemini') recordGeminiTokens(model, stage, result.usageMetadata);
   if (details.kind === 'gemini') {
     raw = (result.candidates?.[0]?.content?.parts || []).filter(x=>typeof x.text === 'string').map(x=>x.text).join('');
   } else if (details.kind === 'anthropic') {

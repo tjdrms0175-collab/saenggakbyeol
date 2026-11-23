@@ -150,7 +150,7 @@
         </select>
         <p class="provider-guide" id="providerGuide"></p>
         <label class="field-label" for="apiModelInput">② AI 모델 이름 <span>(각 서비스가 제공하는 모델로 변경 가능)</span></label>
-        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.5-flash-lite" />
+        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.1-flash-lite" />
         <p class="setting-help" id="geminiAutoHelp" hidden>🔄 자동 전환: 1순위 3.5 Flash-Lite → 2순위 3.6 Flash → 3순위 3.8 Flash. 각 모델에서 429 제한이 발생하면 다음 모델로 넘어갑니다. 잠시 후 우선 모델을 다시 확인합니다.</p>
         <div id="customApiRow" hidden><label class="field-label" for="apiBaseUrlInput">사용자 지정 기본 URL (HTTPS)</label><input class="key-input model-input" id="apiBaseUrlInput" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/v1" /><p class="setting-help">OpenAI 호환 Chat Completions API의 기본 주소를 입력하세요. /chat/completions는 자동으로 붙어요.</p></div>
         <div class="setting-help" id="serverKeyStatus" role="status" aria-live="polite">서버에 등록된 API 키 상태를 확인하고 있어요…</div>

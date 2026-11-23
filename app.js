@@ -64,7 +64,7 @@
   })();
   let parentVerifiedPin = null; // Kept in memory only while parent mode is open.
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.5-flash-lite' : savedPreferences.model) : 'gemini-3.5-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.1-flash-lite' : savedPreferences.model) : 'gemini-3.1-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -479,7 +479,7 @@
   }
   const PROVIDER_SETTINGS = {
     freellmapi: { label: 'FreeLLMAPI (개인 실험용)', model: 'auto:smart', guide: '<a href="https://github.com/tashfeenahmed/freellmapi" target="_blank" rel="noopener noreferrer">FreeLLMAPI 공식 저장소</a> · 개인용 무료 API 라우터를 별도로 설치·운영해야 해요. 모델 자동 선택: auto:smart. Render에서는 서버에서 접속 가능한 HTTPS 주소와 API 키가 필요해요. 다른 제공업체로 아이의 질문이 전송될 수 있어요. 다수 사용자 공개 서비스에는 권장하지 않아요.' },
-    gemini: { label: 'Google Gemini', model: 'gemini-3.5-flash-lite', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 자동 전환: ① Gemini 3.5 Flash-Lite → ② Gemini 3.6 Flash → ③ Gemini 3.8 Flash. 모델 선택과 전환은 Render 서버에서 관리해요. 429 제한에 걸린 모델은 일시적으로 건너뛰고 다시 확인합니다. 모델별 무료 한도와 요금은 계정마다 달라요.' },
+    gemini: { label: 'Google Gemini', model: 'gemini-3.1-flash-lite', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 자동 전환: ① Gemini 3.1 Flash-Lite → ② Gemini 3.5 Flash-Lite → ③ Gemini 3.8 Flash. 모델 선택과 전환은 Render 서버에서 관리해요. 429 제한에 걸린 모델은 일시적으로 건너뛰고 다시 확인합니다. 모델별 무료 한도와 요금은 계정마다 달라요.' },
     openai: { label: 'OpenAI', model: 'gpt-4.1-mini', guide: '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API 키 발급</a> · 별도 API 비용이 발생할 수 있어요.' },
     anthropic: { label: 'Anthropic Claude', model: 'claude-sonnet-4-5', guide: '<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Claude API 키 발급</a> · 계정별 요금이 적용돼요.' },
     openrouter: { label: 'OpenRouter', model: 'google/gemini-2.5-flash', guide: '<a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter API 키 발급</a> · 모델 이름과 요금/무료 표시를 확인하세요.' },
@@ -1101,7 +1101,7 @@
     if (state.busy) { $('#settingStatus').textContent = '응답이 끝난 뒤 설정을 바꿀 수 있어요.'; return; }
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = provider==='gemini' ? 'gemini-3.5-flash-lite' : $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'gemini-3.1-flash-lite' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode === 'live' && !/^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(model)) {
       $('#settingStatus').textContent = 'AI 모델 이름을 입력해 주세요.'; return;
@@ -1123,7 +1123,7 @@
     const button = $('#testApiConnectionBtn');
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = provider==='gemini' ? 'gemini-3.5-flash-lite' : $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'gemini-3.1-flash-lite' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode !== 'live') { status.textContent = '먼저 외부 AI API 연결을 선택해 주세요.'; return; }
     if (reconnectOperation) { status.textContent = '다른 AI 질문이 진행 중이에요. 완료되면 연결을 시험해 주세요.'; return; }

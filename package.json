@@ -1,13 +1,13 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.29.0",
+  "version": "1.36.0",
   "private": true,
   "type": "module",
   "description": "Grade-aware Socratic tutor across Korean, math, social studies, science, and English; AI-first answer safety",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs && node --check hint-safety.mjs",
-    "test": "node --test tutor-engine.test.mjs router-integration.test.mjs reconnect-integration.test.mjs gemini-failover.test.mjs public-start.test.mjs hint-safety-integration.test.mjs step-feedback-integration.test.mjs auto-subject-grade.test.mjs parent-mode.test.mjs final-vs-step.test.mjs grade-all-subjects.test.mjs"
+    "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs && node --check hint-safety.mjs && node --check photo-reader.mjs",
+    "test": "node --test tutor-engine.test.mjs router-integration.test.mjs reconnect-integration.test.mjs gemini-failover.test.mjs public-start.test.mjs hint-safety-integration.test.mjs step-feedback-integration.test.mjs auto-subject-grade.test.mjs parent-mode.test.mjs final-vs-step.test.mjs grade-all-subjects.test.mjs hint-repair-integration.test.mjs v31-hint-progression.test.mjs v32-voice-photo.test.mjs v33-camera.test.mjs v34-photo-recognition.test.mjs v35-staged-hints.test.mjs v35-server-choice-repair.test.mjs v36-cost-optimized.test.mjs"
   },
   "engines": {
     "node": ">=20"

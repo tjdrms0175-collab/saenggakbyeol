@@ -7,14 +7,22 @@ globalThis.fetch = async (url, options={}) => {
   const model = decodeURIComponent(String(url).split('/models/')[1].split(':')[0]);
   const payload = JSON.parse(options.body);
   const isReview = payload.systemInstruction.parts[0].text.includes('독립 검토자');
-  if (model === 'gemini-3.5-flash-lite') {
+  if (process.env.GEMINI_VALIDATE_COST === '1') {
+    const config = payload.generationConfig || {};
+    const expectedThinking = model === 'gemini-3.8-flash' ? 'low' : 'minimal';
+    const withinBudget = Number(config.maxOutputTokens) > 0 && config.maxOutputTokens <= 1700;
+    if (!withinBudget || config.thinkingConfig?.thinkingLevel !== expectedThinking)
+      return new Response(JSON.stringify({error:'missing cost controls'}),{status:400});
+  }
+
+  if (model === 'gemini-3.1-flash-lite') {
     primaryAttempts++;
     if (scenario === 'auth') return new Response('{}',{status:401});
     if (scenario === 'overload') return new Response('{}',{status:503});
     if (['two-quota','all-quota'].includes(scenario) || (scenario === 'quota-first' && primaryAttempts === 1))
       return new Response('{}',{status:429});
   }
-  if (model === 'gemini-3.6-flash' && ['two-quota','all-quota'].includes(scenario)) return new Response('{}',{status:429});
+  if (model === 'gemini-3.5-flash-lite' && ['two-quota','all-quota'].includes(scenario)) return new Response('{}',{status:429});
   if (model === 'gemini-3.8-flash' && scenario === 'all-quota') return new Response('{}',{status:429});
   const output = isReview
     ? {approved:true,focus:'두 수의 최대공약수 찾기',safe_hint:'먼저 12의 약수를 하나씩 적고, 18에도 공통으로 들어 있는지 비교해 볼까요?',verdict:'uncertain',reason:'원문과 일치',private_final_answer:'6',answer_aliases:[],safe_to_show:true,contains_answer:false,contains_complete_solution:false}
