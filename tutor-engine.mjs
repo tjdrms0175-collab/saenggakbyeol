@@ -14,7 +14,7 @@ const SUBJECT_SET = new Set(['국어', '수학', '사회', '과학', '영어', '
 const INTENTS = new Set(['ask_hint', 'answer_attempt', 'clarification']);
 const VERDICTS = new Set(['correct', 'incorrect', 'uncertain']);
 
-export const TUTOR_ENGINE_VERSION = 'v31-grounded-progressive-hints-20261123';
+export const TUTOR_ENGINE_VERSION = 'v35-grade-scaffolded-multiple-choice-20261123';
 
 export class TutorEngineError extends Error {
   constructor(message, status = 502) {
@@ -305,6 +305,28 @@ ${Object.entries(profile.methods).map(([subject,method])=>`${subject}: ${method}
 아이가 중간 질문에 답하면 중간 단계만 판정해 칭찬하고, 원래 문제의 최종 답과 혼동하지 마세요.`;
 }
 
+/** A phase guide, not a solver. Every subject and grade uses the same
+ * no-answer policy, but different cognitive demands. */
+export function hintStageGuidance(grade, hintNumber) {
+  const n=Number.isFinite(Number(hintNumber)) ? Math.max(1,Math.floor(Number(hintNumber))) : 1;
+  const stages=[
+    '1단계: 답에 직접 필요한 개념이나 정답 선택지의 결정적 표현을 알려 주지 말고, 원문 속 현상/자료를 확인할 작은 관찰 하나만 시킵니다. 첫 힌트에서 문제의 원인을 설명하거나 정답 보기를 바꿔 말하지 마세요.',
+    '2단계: 앞에서 확인한 사실과 새로운 조건을 하나 비교하게 합니다. 객관식이면 보기별 설명이 문제의 시간·대상·상황과 일치하는지 검토하되 옳은 보기의 내용이나 번호는 알려 주지 않습니다.',
+    '3단계: 아이가 찾은 단서를 다른 보기/상황에 적용해 원인과 결과가 맞는지 검토하게 합니다. 결정적 정답 문장을 완성하지 말고 한 가지 검토 질문만 합니다.',
+    '4단계 이상: 아이가 이해하지 못한 연결 고리 하나를 더 쉬운 일상 사례나 반례·부분 질문으로 분해해 줍니다. 첫 힌트의 단순 반복이나 정답 문구 암시는 금지합니다.'
+  ];
+  const phase=Math.min(n,4);
+  const gradeSpecific={
+    '초1~2':'일상의 장면 한 개를 떠올리게 하고 쉬운 낱말로 짧게 물어요. 개념 설명보다 눈으로 볼 수 있는 작은 차이에 집중하세요.',
+    '초3~4':'두 가지 구체적인 장면이나 조건을 비교하고 차이의 근거를 한 가지 찾게 하세요. 전문 용어는 필요할 때만 풀어서 설명하세요.',
+    '초5~6':'시간·대상·조건을 근거로 가설 또는 보기의 타당성을 한 가지씩 점검하세요. 단, 정답 선택지에 있는 결정적 두 개념을 묶어 설명하지 마세요.'
+  };
+  return `[현재 힌트 ${n}회차: ${stages[phase-1]}]
+[학년별 사고 행동: ${gradeSpecific[grade]||gradeSpecific['초3~4']}]
+이전 대화에서 실제로 진행한 단계를 우선 확인하고 이미 알고 있는 사실을 반복하지 마세요. 학년 구분은 문장 어려움뿐 아니라 필요한 생각의 종류까지 구분합니다.
+선택지의 정답을 알게 만드는 독특한 핵심 단어 2개 이상을 한 힌트에 함께 쓰거나, 정답 선택지의 주장을 바꾸어 재진술하지 마세요.`;
+}
+
 function contextPayload(input) {
   return {
     original_problem_verbatim: input.original,
@@ -313,6 +335,7 @@ function contextPayload(input) {
     subject: input.subject, // '자동': AI must identify from problem, never infer from old UI choices
     subject_classification_rule: 'Always classify the subject from the original question and photo; ignore previous course selections.',
     hint_number: input.hintLevel,
+    thinking_step_instruction: hintStageGuidance(input.grade,input.hintLevel),
     last_child_message: input.childLatest,
     possible_answer_text_only_if_student_attempted: input.attemptText,
     prior_dialogue: input.recentDialogue.slice(-12),
@@ -323,6 +346,7 @@ function contextPayload(input) {
 export function makeDraftPrompt(input) {
   const instructions = `${COMMON_RULES}
 ${gradeTeachingGuidance(input.grade)}
+${hintStageGuidance(input.grade,input.hintLevel)}
 [1차 초안: AI 문제 해석 + 비공개 답 + 한 단계 힌트]
 원문 문제를 내부에서 직접 풀어서 비공개 private_final_answer에 정답을 적으세요. 여러 정답이 가능한 열린 질문이라면 빈 문자열로 두세요.
 private_final_answer/answer_aliases는 서버의 정답 누출 검사에만 쓰이고 학생에게 표시되지 않습니다. 절대 hint/focus에 복사하지 마세요.
@@ -330,6 +354,8 @@ private_final_answer/answer_aliases는 서버의 정답 누출 검사에만 쓰�
 이전 대화에서 아이가 아직 하지 않은 단계를 건너뛰거나 숫자 결과를 미리 알려주면 안 됩니다.
 추가 힌트 요청이라면 이전 선생님의 마지막 힌트와 비교해 새로운 사고 단계로 발전시키세요. 같은 뜻을 다른 말로 반복하지 마세요.
 문제에 없는 정답의 글자 수나 음절 수를 지어내지 마세요.
+객관식에서는 정답 보기의 결정적 이유·표현을 힌트 문장에 옮기지 마세요. 특히 같은 보기의 특징적인 단어·개념 둘을 함께 결합해 정답이 바로 보이지 않게 하세요. 보기 번호를 유도하거나 정답 보기를 바꿔 말하는 것은 금지입니다.
+과학에서 계절·밤낮처럼 이유를 묻는 문제는 이미 주어진 현상과 결론을 반복하거나 정답 보기에 있는 원인 조합을 바로 설명하면 안 됩니다. 첫 힌트에서는 시간·관찰한 현상의 차이 같은 사전 단서 하나만 생각하게 합니다.
 정답과 풀이 전체, 최종 대입식·등식·정답 단어는 hint에 적지 마세요.
 identified_subject는 문제 원문만 분석해 국어·수학·사회·과학·영어·기타 중 한 값만 정확히 입력하세요.
 반드시 JSON 한 개만 출력:
@@ -340,6 +366,7 @@ identified_subject는 문제 원문만 분석해 국어·수학·사회·과학�
 export function makeReviewPrompt(input, draft) {
   const instructions = `${COMMON_RULES}
 ${gradeTeachingGuidance(input.grade)}
+${hintStageGuidance(input.grade,input.hintLevel)}
 [독립 검토자 역할] [2차 독립 검토: 정답 노출을 반드시 확인]
 문제를 원문으로 다시 독립적으로 풀어 private_final_answer를 적되, 이 값은 학생에게 보내지 않는 내부 검사 자료입니다.
 초안의 private_final_answer와 다르다면 초안을 신뢰하지 말고 원문을 다시 확인하세요.
@@ -347,6 +374,8 @@ ${gradeTeachingGuidance(input.grade)}
 1. 정답 수치, 정답 단어, 동의어, 단위 포함 최종값을 직접 또는 돌려서 알려 주는가?
 2. 숫자·사람·과목·단위를 바꾸거나, 아직 아이가 하지 않은 계산을 대신 완료했는가?
 3. 한 번에 두 단계 이상 계산하거나, 최종 결론을 떠먹여 주는가?
+3-1. 객관식일 때 올바른 선택지의 핵심 이유를 사실상 그대로 다시 말했는가? 원문 보기의 뚜렷한 두 핵심 개념을 함께 쓰면 정답 노출로 판단해 초보 관찰·비교 단계로 되돌리세요.
+3-2. 첫 힌트인데 이미 올바른 보기의 결정적 원인까지 설명했는가? 답을 모르는 아이도 이 한 문장만 읽고 정답 보기를 식별한다면 고치세요.
 4. 이미 전달한 힌트를 그대로 반복하거나, 막연하게 질문을 다시 말하거나, 원문에서 주어진 결과(예: 그림자가 짧아진다는 사실)를 다시 맞히게 하는가?
 5. 개념 하나를 짧게 설명하고, 아이가 직접 할 다음 행동 하나만 묻는가?
 6. 선택된 학년의 말과 단계 크기에 맞으며, 과목을 제대로 인식해 해당 교과의 탐구 방법을 사용했는가?

@@ -49,11 +49,48 @@ export function normalizeFinalAnswer(s) {
   return fold(s).replace(/(?:입니다|이에요|예요|이야|이다)$/,'');
 }
 
+/** Multiple-choice options are untrusted source text, not hint templates.
+ * Catch a hint that echoes the distinctive *combination* of terms from one
+ * alternative, even if the private answer was only the letter (e.g. "C").
+ * This is a conservative lexical guard, complemented by independent LLM review.
+ */
+export function optionParaphraseLeakReason(visibleText, originalProblem) {
+  const original=String(originalProblem||'').normalize('NFKC');
+  const text=String(visibleText||'').normalize('NFKC');
+  const lines=original.split(/\n+/);
+  const choices=[];
+  for (const line of lines) {
+    const found=line.match(/^\s*(?:([A-Ha-h]|[1-8]|[①-⑧]|[가-라])\s*[.)．、:]\s*|([①-⑧])\s*)(.+?)\s*$/u);
+    if (found && found[3].length>=10) choices.push(found[3]);
+  }
+  if (choices.length<3) return null;
+  // Never let the tutor identify the option by saying "C is correct".
+  if (/(?:정답|답|옳은|맞는|바른|고를|골라야|선택)(?:.{0,14}?)(?:[A-Ha-h]\s*(?:번|선택지|보기)|[①-⑧])/iu.test(text))
+    return 'declared-choice-answer';
+  const tokenize = str => String(str||'').toLowerCase()
+    .match(/[가-힣]{3,}|[a-z]{4,}/g)?.filter(w=>
+      !/^(때문이다|때문이에요|때문입니다|그렇다면|그러므로|무엇인가요|어떤것인지|생각해보세요|비교해보세요|것입니다|있습니다|합니다|문제에서)$/.test(w))
+    .map(w=>/[가-힣]/.test(w) && w.length>=4 ? w.slice(0,3) : w)||[];
+  const tokens=choices.map(c=>new Set(tokenize(c)));
+  const appearing=new Map();
+  tokens.forEach(set=>set.forEach(word=>appearing.set(word,(appearing.get(word)||0)+1)));
+  const shown=new Set(tokenize(text));
+  // At least two distinctive concepts from the same option are needed; one
+  // general curriculum word is intentionally permitted as a learning clue.
+  for (const group of tokens) {
+    const unique=[...group].filter(w=>appearing.get(w)===1 && shown.has(w));
+    if (unique.length>=2) return 'choice-deciding-clue';
+  }
+  return null;
+}
+
 /** Find a direct final-answer leak in either visible hint or visible focus. */
 export function answerLeakReason(visibleText, originalProblem, privateAnswers = []) {
   const visible = String(visibleText || '').normalize('NFKC').trim();
   const original = String(originalProblem || '').normalize('NFKC');
   if (!visible) return 'empty';
+  const optionLeak=optionParaphraseLeakReason(visible,original);
+  if (optionLeak) return optionLeak;
 
   // Do not reveal completed computations or announce a final solution.
   if (/(?:정답|최종\s*답|최종\s*결과|따라서\s*답|결론)(?:은|는|이|가|:|은요|입니다|이에요|으로)?\s*(?:[-+]?\d|[가-힣]{1,12})/.test(visible))

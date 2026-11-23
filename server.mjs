@@ -449,6 +449,7 @@ const REPAIR_REASONS = {
   'review-not-repaired': '검토자가 힌트의 정확성 또는 안전성을 승인하지 않음',
   'repeats-prior-hint': '앞선 힌트를 반복하거나 말만 바꿈',
   'answer-leak': '원래 문제의 정답을 직간접적으로 노출함',
+  'choice-deciding-clue': '객관식 보기의 결정적 표현을 한꺼번에 노출함',
 };
 function safeRepairInstructions(error, body) {
   // JSON keeps student supplied text framed as untrusted data.
