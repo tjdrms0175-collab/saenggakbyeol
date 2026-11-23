@@ -13,24 +13,14 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3000);
 const MAX_BODY = 5 * 1024 * 1024;
-// Optional PIN gate for deploying the personal tutor on an HTTPS host.
-// Always set APP_ACCESS_PIN and server-side API keys before exposing to the internet.
+// v19: Opening the learning screen no longer requires a shared access code.
+// APP_ACCESS_PIN is read only for compatibility with previously stored
+// answer-viewing PIN cookies; it is NOT used to authenticate app visitors.
 const APP_ACCESS_PIN = process.env.APP_ACCESS_PIN || '';
-if (process.env.NODE_ENV === 'production' && (!APP_ACCESS_PIN || APP_ACCESS_PIN.length < 6)) {
-  throw new Error('Production use requires APP_ACCESS_PIN of at least six characters.');
-}
 const SESSION_TOKEN = crypto.randomBytes(32).toString('base64url');
-const AUTH_COOKIE = 'sb_session';
-const authFailures = new Map();
 function constantEquals(a,b) {
   const aa=Buffer.from(String(a)), bb=Buffer.from(String(b));
   return aa.length === bb.length && crypto.timingSafeEqual(aa,bb);
-}
-function authenticated(req) {
-  if (!APP_ACCESS_PIN) return true;
-  const cookie = String(req.headers.cookie || '');
-  const match = cookie.match(/(?:^|;\s*)sb_session=([A-Za-z0-9_-]{20,})/);
-  return Boolean(match && constantEquals(match[1],SESSION_TOKEN));
 }
 function sameOrigin(req) {
   if (!req.headers.origin) return true; // non-browser caller; PIN is still mandatory for public hosting
@@ -40,13 +30,43 @@ function sameOrigin(req) {
       origin.host.toLowerCase() === String(req.headers.host || '').toLowerCase();
   } catch (_) { return false; }
 }
-function sessionCookie(req) {
-  const proto = process.env.TRUST_PROXY === '1' ? req.headers['x-forwarded-proto'] : null;
-  const secure = req.socket.encrypted || proto === 'https';
-  return `${AUTH_COOKIE}=${SESSION_TOKEN}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${secure ? '; Secure' : ''}`;
+// The app is publicly accessible. Apply simple server-side AI request caps
+// as a guardrail against accidentally consuming the server owner's quota.
+// This is not account-based billing or abuse-proof authentication.
+const aiUsageByClient = new Map();
+let aiGlobalDay = '';
+let aiGlobalCount = 0;
+function limitInt(value, fallback) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 && n <= 100000 ? n : fallback;
+}
+const AI_CLIENT_HOURLY_LIMIT = limitInt(process.env.AI_CLIENT_HOURLY_LIMIT, 40);
+const AI_GLOBAL_DAILY_LIMIT = limitInt(process.env.AI_GLOBAL_DAILY_LIMIT, 120);
+function aiQuotaExceeded(req) {
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (aiGlobalDay !== day) { aiGlobalDay = day; aiGlobalCount = 0; }
+  // Use the first IP supplied by Render's proxy only when proxy trust is enabled.
+  // Public limits remain best-effort because proxies/NAT may share IPs.
+  const proxyChain = process.env.TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] || '') : '';
+  const address = (proxyChain.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').slice(0, 100);
+  let usage = aiUsageByClient.get(address);
+  if (!usage || now - usage.since >= 3600000) usage = { since: now, count: 0 };
+  if (usage.count >= AI_CLIENT_HOURLY_LIMIT || aiGlobalCount >= AI_GLOBAL_DAILY_LIMIT) {
+    return { error: '현재 AI 질문 사용량 제한에 도달했어요. 잠시 후 다시 이용해 주세요.', retryable:false,
+      code:'PUBLIC_USAGE_LIMIT' };
+  }
+  usage.count += 1;
+  aiGlobalCount += 1;
+  aiUsageByClient.set(address, usage);
+  if (aiUsageByClient.size > 2000) {
+    for (const [ip, item] of aiUsageByClient) if (now - item.since > 3600000) aiUsageByClient.delete(ip);
+    if (aiUsageByClient.size > 2000) aiUsageByClient.clear();
+  }
+  return null;
 }
 
-const HINT_ENGINE_VERSION = 'v18-gemini-three-step-no-tts-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v19-direct-start-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -452,7 +472,7 @@ async function tutor(req, res) {
   const requestId = typeof body.retryRequestId === 'string' ? body.retryRequestId : '';
   if (requestId && !/^[A-Za-z0-9_-]{16,90}$/.test(requestId)) return json(res,400,{error:'요청 식별자가 올바르지 않아요.'});
   if (!requestId) { const result = await computeTutorResponse(body); return json(res,result.status,result.data); }
-  // Scope the key to the client's authenticated session and request body.
+  // Scope request de-duplication to the request ID and body (not a user login).
   const identity = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
   const storageKey = `${SESSION_TOKEN.slice(0,16)}:${requestId}`;
   const existing = completedTutorCalls.get(storageKey);
@@ -485,37 +505,12 @@ const STATIC = new Map([
 ]);
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://localhost');
+  // Compatibility for old, cached app versions: no login is required.
   if (url.pathname === '/api/session' && req.method === 'GET') {
-    return json(res, 200, { locked: Boolean(APP_ACCESS_PIN), authenticated: authenticated(req) });
+    return json(res, 200, { locked:false, authenticated:true });
   }
   if (url.pathname === '/api/login' && req.method === 'POST') {
-    if (!sameOrigin(req)) return json(res, 403, {error:'허용되지 않은 출처예요.'});
-    if (!APP_ACCESS_PIN) return json(res, 200, {ok:true});
-    const address = req.socket.remoteAddress || 'unknown';
-    const entry = authFailures.get(address) || {count:0, until:0};
-    if (entry.until > Date.now()) return json(res, 429, {error:'시도가 너무 많아요. 잠시 뒤 다시 입력해 주세요.'});
-    let input;
-    try { input = JSON.parse(await readBody(req)); }
-    catch (_) { return json(res, 400, {error:'입력 형식을 확인해 주세요.'}); }
-    const good = typeof input?.pin === 'string' && constantEquals(input.pin, APP_ACCESS_PIN);
-    if (!good) {
-      entry.count += 1;
-      if (entry.count >= 5) { entry.until = Date.now()+10*60*1000; entry.count = 0; }
-      authFailures.set(address, entry);
-      if (authFailures.size > 500) authFailures.clear();
-      return json(res, 401, {error:'접근번호가 일치하지 않아요.'});
-    }
-    authFailures.delete(address);
-    res.writeHead(200, {
-      'Set-Cookie': sessionCookie(req),
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    return res.end(JSON.stringify({ok:true}));
-  }
-  if (url.pathname.startsWith('/api/') && url.pathname !== '/api/health' && !authenticated(req)) {
-    return json(res, 401, {error:'생각별 접근번호가 필요해요. 화면의 접근번호를 입력해 주세요.'});
+    return json(res, 200, { ok:true, loginRemoved:true });
   }
   if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
   if (url.pathname === '/api/provider-config' && req.method === 'GET') {
@@ -560,6 +555,8 @@ const server = http.createServer(async (req, res) => {
       if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'정답 보기 비밀번호가 일치하지 않아요.'}); }
     } catch (e) { return json(res,e.status||400,{error:e.message}); }
     clearPinFailures(req);
+    const quota = aiQuotaExceeded(req);
+    if (quota) return json(res, 429, quota);
     const provider=body.provider || 'gemini', details=API_PROVIDERS[provider];
     if (!details) return json(res,400,{error:'AI 제공업체를 확인해 주세요.'});
     const model=typeof body.model==='string' && body.model ? body.model : details.model;
@@ -581,6 +578,8 @@ const server = http.createServer(async (req, res) => {
     if (!sameOrigin(req)) {
       return json(res, 403, { error: '허용되지 않은 출처예요.' });
     }
+    const quota = aiQuotaExceeded(req);
+    if (quota) return json(res, 429, quota);
     return tutor(req, res);
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: '지원하지 않는 요청이에요.' });

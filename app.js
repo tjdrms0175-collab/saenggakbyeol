@@ -49,35 +49,6 @@
       window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}), {once: true});
     }
   }
-  async function initializeAccess() {
-    try {
-      const res = await fetch('/api/session', {cache:'no-store'});
-      if (!res.ok) return;
-      const s = await res.json();
-      if (!s.locked || s.authenticated) return;
-      $('#accessGate').hidden = false;
-      document.body.style.overflow = 'hidden';
-      $('#accessPin').focus();
-    } catch (_) { /* Offline demo remains usable. */ }
-  }
-  function initializeAccessForm() {
-    $('#accessForm').addEventListener('submit', async event => {
-      event.preventDefault();
-      const pin = $('#accessPin').value.trim();
-      const error = $('#accessError');
-      error.textContent = '';
-      try {
-        const res = await fetch('/api/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
-        const data = await res.json();
-        if (!res.ok) { error.textContent = data.error || '접근번호를 다시 확인해 주세요.'; return; }
-        $('#accessPin').value = '';
-        $('#accessGate').hidden = true;
-        document.body.style.overflow = '';
-        showToast('생각별에 오신 것을 환영해요! 🌷');
-        refreshApiServerStatus();
-      } catch (_) { error.textContent = '서버에 연결되지 않았어요. 네트워크를 확인해 주세요.'; }
-    });
-  }
   const EXAMPLES = {
     국어: ['주인공의 마음을 어떻게 알 수 있나요?', '글의 중심 생각은 어떻게 찾나요?'],
     수학: ['사과 12개를 3명에게 나누려면?', '7 × 6은 어떻게 생각해야 하나요?'],
@@ -431,7 +402,7 @@
     try {
       const response = await fetch('/api/provider-config', { cache: 'no-store' });
       if (!response.ok) {
-        el.textContent = response.status === 401 ? '먼저 생각별 접속번호로 로그인해 주세요.' : '서버 설정을 확인할 수 없어요.';
+        el.textContent = '서버 연결 또는 AI 설정을 확인할 수 없어요. 잠시 후 다시 시도해 주세요.';
         return;
       }
       const data = await response.json();
@@ -875,8 +846,6 @@
   document.querySelectorAll('[data-grade]').forEach((button) => button.addEventListener('click', () => changeCourse(button.dataset.grade, state.subject)));
   document.querySelectorAll('[data-subject]').forEach((button) => button.addEventListener('click', () => changeCourse(state.grade, button.dataset.subject)));
   initializePwa();
-  initializeAccessForm();
-  initializeAccess();
   $('#messageForm').addEventListener('submit', (event) => { event.preventDefault(); sendMessage($('#messageInput').value); });
   $('#messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage($('#messageInput').value); }

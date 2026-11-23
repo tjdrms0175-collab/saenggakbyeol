@@ -214,18 +214,6 @@
       <button type="button" class="primary-wide" id="installModalCloseBtn">확인했어요</button>
     </section>
   </div>
-  <div class="modal-backdrop" id="accessGate" hidden>
-    <section class="modal mobile-install-modal" role="dialog" aria-modal="true" aria-labelledby="accessTitle">
-      <h2 id="accessTitle">🔐 생각별 비밀번호</h2>
-      <p class="modal-description">안전한 학습을 위해 보호자가 설정한 접근번호를 입력해 주세요.</p>
-      <form id="accessForm" autocomplete="off">
-        <label class="field-label" for="accessPin">접근번호</label>
-        <input id="accessPin" class="key-input" type="password" inputmode="numeric" autocomplete="off" minlength="4" maxlength="128" required />
-        <p id="accessError" class="connection-test-status" role="alert"></p>
-        <button class="primary-wide" type="submit">학습 시작하기 ✨</button>
-      </form>
-    </section>
-  </div>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
