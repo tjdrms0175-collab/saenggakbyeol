@@ -106,8 +106,15 @@
             <label class="sr-only" for="messageInput">선생님에게 보낼 질문</label>
             <textarea id="messageInput" rows="2" maxlength="1600" placeholder="모르는 문제를 여기 적어보세요! 😊" aria-label="질문 입력"></textarea>
             <div class="message-controls">
-              <label class="upload-button" for="photoInput" title="문제 사진 올리기">📷 <span>사진 올리기</span></label>
-              <input type="file" accept="image/png,image/jpeg,image/webp" id="photoInput" class="sr-only" aria-label="문제 사진 첨부" />
+              <div id="photoPickerArea" class="photo-picker-area">
+                <button type="button" class="upload-button" id="photoMenuBtn" aria-controls="photoChooser" aria-expanded="false" aria-haspopup="true">📷 <span>사진 첨부</span></button>
+                <div id="photoChooser" class="photo-chooser" hidden>
+                  <button type="button" id="takePhotoBtn">📸 카메라로 촬영</button>
+                  <button type="button" id="choosePhotoBtn">🖼️ 앨범에서 선택</button>
+                </div>
+                <input type="file" accept="image/*" capture="environment" id="cameraInput" class="sr-only" aria-label="카메라로 문제 사진 촬영" />
+                <input type="file" accept="image/*" id="photoInput" class="sr-only" aria-label="앨범에서 문제 사진 선택" />
+              </div>
               <button id="micBtn" class="microphone-button" type="button" aria-pressed="false" aria-label="음성으로 질문하기"><span aria-hidden="true">🎤</span> <span id="micLabel">말로 질문</span></button>
               <span class="input-helper">Enter 전송 · Shift + Enter 줄바꿈</span>
               <button type="submit" class="send-button" id="sendBtn"><span>보내기</span><span aria-hidden="true">➤</span></button>

@@ -69,6 +69,50 @@
     messages: [], records: readRecords(), toastTimer: null
   };
 
+  // v32: treat each browser recognition segment as an updated hypothesis, not a new sentence.
+  // Chrome/WebView sometimes re-emits the same phrase after restarting recognition.
+  function cleanSpeechText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+  function comparableSpeech(value) {
+    return cleanSpeechText(value).toLocaleLowerCase('ko-KR').replace(/[,.!?，、。！？]/g, '').replace(/\s+/g, ' ').trim();
+  }
+  function joinSpeechWithoutRepeats(previous, incoming) {
+    const a = cleanSpeechText(previous), b = cleanSpeechText(incoming);
+    if (!a) return b;
+    if (!b) return a;
+    const ca = comparableSpeech(a), cb = comparableSpeech(b);
+    if (ca === cb || ca.endsWith(cb)) return a;
+    if (cb.startsWith(ca)) return b;
+    // Match the longest repeated suffix/prefix, including single Korean words.
+    const aa = a.split(' '), bb = b.split(' ');
+    const ac = ca.split(' '), bc = cb.split(' ');
+    for (let n = Math.min(ac.length, bc.length); n >= 1; n--) {
+      if (ac.slice(-n).join(' ') === bc.slice(0, n).join(' ')) {
+        return cleanSpeechText(aa.concat(bb.slice(n)).join(' '));
+      }
+    }
+    // Browser segments sometimes omit spaces between the same Korean syllables.
+    const max = Math.min(ca.length, cb.length);
+    for (let n = max; n >= 3; n--) {
+      if (ca.slice(-n) === cb.slice(0, n)) return cleanSpeechText(a + b.slice(n));
+    }
+    return `${a} ${b}`;
+  }
+  function collapseSpeechEchoes(value) {
+    // A repeated partial hypothesis can become a transcript such as "우리나라 우리나라 우리나라".
+    const words = cleanSpeechText(value).split(' ');
+    const out = [];
+    for (const word of words) {
+      if (word && comparableSpeech(out[out.length-1]) !== comparableSpeech(word)) out.push(word);
+    }
+    return out.join(' ');
+  }
+  function composedSpeechDraft() {
+    const recognized = joinSpeechWithoutRepeats(voice.finalText, voice.currentInterim);
+    return collapseSpeechEchoes(joinSpeechWithoutRepeats(voice.baseText, recognized)).slice(0,1600);
+  }
+
   // Browser Web Speech API: no paid API required. Microphone recognition may use
   // the browser vendor's online recognition service (not guaranteed offline).
   const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -123,7 +167,7 @@
         ? '✅ 음성 질문이 글자로 바뀌었어요. 내용을 확인하고 보내기를 눌러 주세요.'
         : '아직 목소리를 인식하지 못했어요. 마이크를 눌러 다시 말해 주세요.'),
       voice.error || !voice.heardAnything ? 'error' : 'success');
-      $('#messageInput').focus();
+      // Do not refocus: opening the mobile keyboard hides the question and answer area.
     }
   }
   function scheduleRecognitionEnd() {
@@ -148,19 +192,24 @@
       if (voice.recognition !== recognition || !voice.listening) return;
       let segmentFinal = '', segmentInterim = '';
       for (const result of event.results) {
-        const piece = result[0]?.transcript?.trim() || '';
-        if (result.isFinal) segmentFinal += `${piece} `;
-        else segmentInterim += `${piece} `;
+        const piece = cleanSpeechText(result[0]?.transcript);
+        if (!piece) continue;
+        if (result.isFinal) segmentFinal = joinSpeechWithoutRepeats(segmentFinal, piece);
+        else segmentInterim = joinSpeechWithoutRepeats(segmentInterim, piece);
       }
-      voice.finalText = [voice.completedText, segmentFinal.trim()].filter(Boolean).join(' ');
-      voice.currentInterim = segmentInterim.trim();
-      if (voice.finalText || voice.currentInterim) {
+      // event.results already contains every result in the current segment. Replace
+      // this segment's hypothesis rather than appending it on every onresult event.
+      voice.finalText = joinSpeechWithoutRepeats(voice.completedText, segmentFinal);
+      voice.currentInterim = segmentInterim;
+      const draft = composedSpeechDraft();
+      const oldDraft = $('#messageInput').value;
+      if (draft && draft !== oldDraft) {
         voice.heardAnything = true;
         voice.lastSpeechAt = Date.now();
         scheduleRecognitionEnd();
+        $('#messageInput').value = draft;
       }
-      $('#messageInput').value = [voice.baseText, voice.finalText, voice.currentInterim].filter(Boolean).join(' ').slice(0, 1600);
-      voiceNotice('🎤 듣고 있어요. 잠깐 쉬어도 괜찮아요! 말을 멈춘 뒤 약 5.5초 후 마무리해요.', 'listening');
+      voiceNotice('🎤 듣고 있어요. 잠시 쉬어도 괜찮아요. 완료 후 문장을 확인해 주세요.', 'listening');
     };
     recognition.onerror = (event) => {
       if (voice.recognition !== recognition || !voice.listening) return;
@@ -179,10 +228,10 @@
       if (voice.recognition !== recognition || !voice.listening) return;
       // Preserve finalized words across short-lived browser recognition instances.
       // A final result sometimes never arrives before onend: keep partial text.
-      voice.completedText = [voice.finalText, voice.currentInterim].filter(Boolean).join(' ').trim();
+      voice.completedText = collapseSpeechEchoes(joinSpeechWithoutRepeats(voice.finalText, voice.currentInterim));
       voice.finalText = voice.completedText;
       voice.currentInterim = '';
-      $('#messageInput').value = [voice.baseText, voice.completedText].filter(Boolean).join(' ').slice(0, 1600);
+      $('#messageInput').value = composedSpeechDraft();
       voice.recognition = null;
       const expired = Date.now() - (voice.lastSpeechAt || voice.startedAt) >=
         (voice.lastSpeechAt ? SILENCE_GRACE_MS : FIRST_SPEECH_WAIT_MS);
@@ -289,6 +338,9 @@
     $('#sendBtn').disabled = state.busy;
     $('#messageInput').disabled = state.busy;
     $('#photoInput').disabled = state.busy;
+    $('#cameraInput').disabled = state.busy;
+    $('#photoMenuBtn').disabled = state.busy;
+    if (state.busy) closePhotoMenu();
     $('#newProblemBtn').disabled = state.busy;
     updateMicrophoneUi();
     document.querySelectorAll('.sample-prompt').forEach((btn) => { btn.disabled = state.busy; });
@@ -715,34 +767,96 @@
     revealNewTutorReply(confirmation);
     showToast('오늘의 공부 기록에 반짝 별이 추가됐어요! ✨');
   }
-  async function prepareImage(file) {
-    if (!file) return;
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { showToast('JPG, PNG, WEBP 사진만 올릴 수 있어요.'); return; }
-    if (file.size > 12 * 1024 * 1024) { showToast('12MB보다 작은 사진을 골라 주세요.'); return; }
+  // v32: Explicit camera vs gallery. capture=environment asks Android to open
+  // the rear camera; selected photos are attached locally before the child sends.
+  function closePhotoMenu() {
+    const menu = $('#photoChooser');
+    if (menu) menu.hidden = true;
+    $('#photoMenuBtn')?.setAttribute('aria-expanded', 'false');
+  }
+  function togglePhotoMenu() {
+    if (state.busy) return;
+    const menu = $('#photoChooser');
+    menu.hidden = !menu.hidden;
+    $('#photoMenuBtn').setAttribute('aria-expanded', String(!menu.hidden));
+  }
+  function openDevicePhotoPicker(camera) {
+    closePhotoMenu();
+    if (state.busy) return;
+    const input = camera ? $('#cameraInput') : $('#photoInput');
+    input.value = '';
+    input.click(); // Must run directly within the user's click for Android capture intents.
+  }
+  async function decodePhoto(file) {
+    // Some Samsung browsers/WebViews support file input but not createImageBitmap.
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        if (bitmap.width && bitmap.height) return {source:bitmap, width:bitmap.width, height:bitmap.height, release:()=>bitmap.close?.()};
+        bitmap.close?.();
+      } catch (_) { /* Fall back to an <img> decoder below. */ }
+    }
+    const url = URL.createObjectURL(file);
     try {
-      const bitmap = await createImageBitmap(file);
-      const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('image-decode'));
+        img.src = url;
+      });
+      if (!img.naturalWidth || !img.naturalHeight) throw Error('image-decode');
+      return {source:img, width:img.naturalWidth, height:img.naturalHeight, release:()=>URL.revokeObjectURL(url)};
+    } catch (error) { URL.revokeObjectURL(url); throw error; }
+  }
+  async function prepareImage(file, origin = 'gallery') {
+    if (!file || state.busy) return;
+    if (!/^image\//.test(file.type) && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || '')) {
+      showToast('이미지 파일을 골라 주세요.'); return;
+    }
+    if (file.size > 20 * 1024 * 1024) { showToast('사진이 너무 커요. 20MB 이하의 사진을 골라 주세요.'); return; }
+    let decoded;
+    try {
+      voice.listening && stopListening();
+      voiceNotice('📷 사진을 확인하는 중이에요. 잠시 기다려 주세요.');
+      decoded = await decodePhoto(file);
       const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const scale = Math.min(1, 1500 / Math.max(decoded.width, decoded.height));
+      canvas.width = Math.max(1, Math.round(decoded.width * scale));
+      canvas.height = Math.max(1, Math.round(decoded.height * scale));
       const ctx = canvas.getContext('2d');
+      if (!ctx) throw Error('canvas-unavailable');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      const dataUrl = canvas.toDataURL('image/jpeg', .82);
-      if (dataUrl.length > 4 * 1024 * 1024) { showToast('사진 용량이 너무 커요. 다른 사진을 사용해 주세요.'); return; }
+      ctx.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+      // Keep the image under the server's 4 MB data-url limit even with large cameras.
+      let dataUrl = '';
+      for (let quality of [.86,.76,.64,.50]) {
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (dataUrl.length <= 4 * 1024 * 1024) break;
+      }
+      if (!dataUrl.startsWith('data:image/jpeg') || dataUrl.length > 4*1024*1024) {
+        showToast('사진을 작게 만들지 못했어요. 화질을 낮춰 다시 촬영해 주세요.'); return;
+      }
       state.photo = { dataUrl };
       $('#photoThumbnail').src = dataUrl;
       $('#photoPreview').hidden = false;
-      showToast(state.mode === 'demo' ? '사진을 첨부했어요! 데모에서는 사진의 글자를 읽지 못해요.' : '사진을 첨부했어요! AI가 문제를 살펴볼 수 있어요.');
-    } catch (_) { showToast('사진을 열 수 없어요. 다른 파일을 골라 주세요.'); }
-    finally { $('#photoInput').value = ''; }
+      voiceNotice('✅ 사진이 첨부됐어요. 내용을 확인하고 보내기를 눌러 주세요.', 'success');
+      showToast(origin === 'camera' ? '📷 촬영한 사진을 첨부했어요. 보내기를 눌러 주세요!' : '🖼️ 사진을 첨부했어요. 보내기를 눌러 주세요!');
+    } catch (error) {
+      voiceNotice('사진을 읽지 못했어요. 다른 사진이나 JPG 촬영 모드를 사용해 주세요.', 'error');
+      showToast('사진을 읽지 못했어요. 카메라가 HEIC 형식이면 JPG로 변경해 주세요.');
+    } finally {
+      decoded?.release();
+      $('#cameraInput').value = '';
+      $('#photoInput').value = '';
+    }
   }
   function clearPhoto() {
     state.photo = null;
     $('#photoThumbnail').removeAttribute('src');
     $('#photoPreview').hidden = true;
     $('#photoInput').value = '';
+    $('#cameraInput').value = '';
+    closePhotoMenu();
   }
   function resetParentSession() {
     parentVerifiedPin = null;
@@ -1002,7 +1116,12 @@
   $('#recheckProblemBtn').addEventListener('click', () => sendMessage('문제를 다시 읽어 주세요.', { fromRecheck: true }));
   $('#understoodBtn').addEventListener('click', markUnderstood);
   $('#newProblemBtn').addEventListener('click', () => { if (!state.busy) { resetConversation(); $('#messageInput').focus(); } });
-  $('#photoInput').addEventListener('change', (event) => prepareImage(event.target.files?.[0]));
+  $('#photoMenuBtn').addEventListener('click', togglePhotoMenu);
+  $('#takePhotoBtn').addEventListener('click', () => openDevicePhotoPicker(true));
+  $('#choosePhotoBtn').addEventListener('click', () => openDevicePhotoPicker(false));
+  $('#cameraInput').addEventListener('change', event => prepareImage(event.target.files?.[0], 'camera'));
+  $('#photoInput').addEventListener('change', event => prepareImage(event.target.files?.[0], 'gallery'));
+  document.addEventListener('click', event => { if (!event.target.closest('#photoPickerArea')) closePhotoMenu(); });
   $('#removePhotoBtn').addEventListener('click', clearPhoto);
   document.querySelectorAll('input[name="mode"]').forEach((input) => input.addEventListener('change', () => syncProviderFields()));
   $('#apiProviderSelect').addEventListener('change', () => syncProviderFields({ switched: true }));
