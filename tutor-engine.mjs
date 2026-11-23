@@ -14,7 +14,7 @@ const SUBJECT_SET = new Set(['국어', '수학', '사회', '과학', '영어', '
 const INTENTS = new Set(['ask_hint', 'answer_attempt', 'clarification']);
 const VERDICTS = new Set(['correct', 'incorrect', 'uncertain']);
 
-export const TUTOR_ENGINE_VERSION = 'v30-grade-clearer-and-safe-repair-20261123';
+export const TUTOR_ENGINE_VERSION = 'v31-grounded-progressive-hints-20261123';
 
 export class TutorEngineError extends Error {
   constructor(message, status = 502) {
@@ -22,6 +22,28 @@ export class TutorEngineError extends Error {
     this.name = 'TutorEngineError';
     this.status = status;
   }
+}
+
+/** Internal review failure that can be repaired with specific feedback. No model answer
+ * or secret is exposed through the public HTTP response. */
+export class HintQualityError extends TutorEngineError {
+  constructor(code, candidate = '') {
+    super('아직 알맞은 힌트를 만들지 못했어요. 다시 준비할게요.', 502);
+    this.name = 'HintQualityError';
+    this.qualityCode = code;
+    this.rejectedHint = String(candidate || '').slice(0, 400);
+  }
+}
+
+/** Avoid invented answer-length requirements such as "한 글자 이름" when
+ * a question did not give that condition. Works independently of LLM flags. */
+export function fabricatedAnswerLength(hint, original) {
+  const candidate = String(hint || '');
+  const question = String(original || '');
+  const pattern = /(?:한|두|세|네|다섯|\d+)\s*(?:글자|음절)\s*(?:짜리)?\s*(?:말|단어|이름|표현|정답|답|용어)|(?:답|정답|이름|단어|용어)(?:은|는|이|가|을|를|의|도|을까요|로)?\s*(?:한|두|세|네|다섯|\d+)\s*(?:글자|음절)/g;
+  const found = candidate.match(pattern) || [];
+  return found.some(phrase => !question.includes(phrase) &&
+    !/(?:한|두|세|네|다섯|\d+)\s*(?:글자|음절)/.test(question));
 }
 
 export function stripJsonEnvelope(text) {
@@ -68,7 +90,7 @@ export function hasUsefulHint(hint, question) {
   if (/^(?:좋은 질문|힘내|생각해|차근차근|먼저 시작|힌트 질문 하나)[!?.\s🌟🌷]*$/i.test(h)) return false;
   if (VAGUE_HINTS.some(pat => pat.test(h))) return false;
   if (/(?:정답|답)(?:은|이|:|으로|은요|입니다|이에요)\s*[-+]?\d/.test(h)) return false;
-  if (changesNumberUnit(h, question)) return false;
+  if (changesNumberUnit(h, question) || fabricatedAnswerLength(h, question)) return false;
   if (/(?:따라서|그러므로)\s*[-+]?\d+(?:\.\d+)?\s*(?:입니다|이에요|이야)/.test(h)) return false;
   return true;
 }
@@ -201,6 +223,13 @@ verdict는 원문 전체 최종 답의 정오이며, step_verdict는 직전 선�
 (3) 초등학생에게 필요한 '지금 한 단계'만 고르세요. 가장 처음엔 친숙한 예시나 개념 하나와 첫 행동을 안내합니다.
 (4) 다음 힌트는 아이가 이전 단계에서 무엇을 해 봤는지 참고해 조금씩 앞으로 나아가세요. 앞서 말한 내용을 반복하지 마세요.
 (5) 마지막 단계가 정답만 쓰는 단계라면, 그 직전에서 멈춰 아이에게 직접 계산하거나 결론을 말하도록 요청하세요. 답을 대신 완성하지 마세요.
+[추가 힌트는 사고 과정이 실제로 진전되어야 함]
+힌트 1: 문제의 중심 조건이나 현상을 하나 짚고, 아이가 할 첫 사고 행동을 묻습니다.
+힌트 2: 첫 힌트와 다른 새 단서·비교 대상을 이용해 앞 단계를 발전시킵니다. 같은 뜻의 표현만 바꾸지 마세요.
+힌트 3: 아이가 이미 확인한 단서를 원래 질문에 적용하는 다음 행동을 묻습니다.
+힌트 4 이상: 아직 막힌 연결 고리 하나를 추가로 제시하되, 최종 답·정답의 첫 글자·글자 수·완성 문장은 제공하지 않습니다.
+'몇 글자 정답', '한 글자 이름', '정답은 두 글자'처럼 원문에 없는 글자 수·조건을 만들어서는 안 됩니다.
+학생이 새로운 생각 없이 같은 것을 반복해서 질문하는 상태로 만들지 마세요. 새로운 힌트에서 무엇이 달라졌는지 이전 대화와 내부적으로 비교하세요.
 
 [학년별 설명 조절: 지능 평가가 아님]
 학년은 아이의 지능·성취도를 추정하거나 문제의 과목을 결정하는 값이 아닙니다. 오직 설명 언어와 생각할 단계의 크기를 조정하는 기본 출발점입니다.
@@ -299,6 +328,8 @@ ${gradeTeachingGuidance(input.grade)}
 private_final_answer/answer_aliases는 서버의 정답 누출 검사에만 쓰이고 학생에게 표시되지 않습니다. 절대 hint/focus에 복사하지 마세요.
 문제의 핵심 개념에서 시작해 현재 아이가 해 볼 '딱 한 단계'를 고르세요. 힌트 번호가 높다고 답을 주지 마세요.
 이전 대화에서 아이가 아직 하지 않은 단계를 건너뛰거나 숫자 결과를 미리 알려주면 안 됩니다.
+추가 힌트 요청이라면 이전 선생님의 마지막 힌트와 비교해 새로운 사고 단계로 발전시키세요. 같은 뜻을 다른 말로 반복하지 마세요.
+문제에 없는 정답의 글자 수나 음절 수를 지어내지 마세요.
 정답과 풀이 전체, 최종 대입식·등식·정답 단어는 hint에 적지 마세요.
 identified_subject는 문제 원문만 분석해 국어·수학·사회·과학·영어·기타 중 한 값만 정확히 입력하세요.
 반드시 JSON 한 개만 출력:
@@ -320,6 +351,9 @@ ${gradeTeachingGuidance(input.grade)}
 5. 개념 하나를 짧게 설명하고, 아이가 직접 할 다음 행동 하나만 묻는가?
 6. 선택된 학년의 말과 단계 크기에 맞으며, 과목을 제대로 인식해 해당 교과의 탐구 방법을 사용했는가?
 7. 초1~2에는 교과 용어를 그대로 던지지 않았는가? 초3~4에는 생활과 개념을 연결했는가? 초5~6에는 원리·근거를 따져 볼 기회가 있는가?
+8. 새 힌트가 이전 대화보다 실제로 한 단계 진전하는가? 단순한 말바꿈이라면 고치세요.
+9. 원문에 없는 정답 글자 수·음절 수·사람·시간·계산 조건을 새로 만들지는 않았는가? 거짓 조건은 제거하세요.
+10. 검토자가 안전한 두 문장으로 수정했다면 모든 검증 플래그를 수정본 기준으로 평가하고 approved=true로 설정하세요.
 위 질문에서 조금이라도 위험하면 safe_hint를 더 기초적인 첫 단계로 고치세요.
 '다음 단계'가 사실상 최종 답이라면 직접 답을 묻고 멈추세요. 여러 번 힌트를 요청하더라도 답 자체는 쓰지 마세요.
 grade_fit은 선택된 학년에 맞는 어휘와 단계일 때만 true, subject_method_fit은 실제 과목에 맞는 풀이 방식일 때만 true입니다. 두 값 중 하나라도 false면 적절한 safe_hint로 고친 후 다시 검사해야 합니다.
@@ -328,7 +362,7 @@ contains_answer는 정답이 직접·간접 노출되면 true,
 contains_complete_solution은 최종 계산·완성 풀이를 제공하면 true입니다.
 identified_subject는 문제 원문을 독립적으로 판단하여 국어·수학·사회·과학·영어·기타 중 하나만 쓰세요.
 반드시 JSON 한 개만 출력:
-{"approved":true|false,"identified_subject":"수학","focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"grade_fit":true|false,"subject_method_fit":true|false,"contains_answer":false,"contains_complete_solution":false,"reason":"내부 검토 메모"}.
+{"approved":true|false,"identified_subject":"수학","focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"grade_fit":true|false,"subject_method_fit":true|false,"contains_answer":false,"contains_complete_solution":false,"progresses_from_prior":true,"unsupported_condition":false,"reason":"내부 검토 메모"}.
 아이에게 답을 직접 제출한 경우가 아니면 correct/incorrect를 내리지 마세요.
 아이의 답이 직전 힌트 질문에 맞으면 step_verdict=correct, 원문 최종 답이 아닌 경우 verdict=uncertain으로 유지하세요. 정답을 검증할 때 초안의 private_final_answer와 자신의 private_final_answer가 모두 원문에서 마지막에 구하라는 값인지 확인하세요. 최종 답과 중간 답을 혼동하면 correct로 판정하지 마세요.
 검토자는 초안 verdict와 step_verdict를 그대로 베끼지 말고 각각 독립적으로 평가하세요.
@@ -373,15 +407,17 @@ function validateReview(raw, input, draft) {
     r.contains_complete_solution === false;
   const hintUseful = !!focus && hasUsefulHint(hint, input.original);
   if (!confirmedAnswer && !hintUseful)
-    throw new TutorEngineError('힌트가 모호하거나 문제와 어긋나서 숨겼어요. 다시 힌트를 요청해 주세요.');
+    throw new HintQualityError('vague-or-off-topic', hint);
   if (!confirmedAnswer && !safe_to_show)
-    throw new TutorEngineError('힌트에 정답이나 완성된 풀이가 섞일 수 있어 표시하지 않았어요. 다시 요청해 주세요.');
+    throw new HintQualityError('answer-or-complete-solution', hint);
   // Independent reviewer must reject explicitly flagged age/subject mismatch.
   // Keep optional for compatibility with older mock providers, but request
   // both fields in the v29 reviewer schema. Correct student attempts are
   // handled separately and never revoked due to a poor *next* hint.
   if (!confirmedAnswer && (r.grade_fit === false || r.subject_method_fit === false))
-    throw new TutorEngineError('학년이나 과목에 맞지 않는 힌트라 숨겼어요. 더 쉬운 단계로 다시 요청해 주세요.');
+    throw new HintQualityError('grade-or-subject-mismatch', hint);
+  if (!confirmedAnswer && r.unsupported_condition === true) throw new HintQualityError('invented-condition', hint);
+  if (!confirmedAnswer && r.progresses_from_prior === false) throw new HintQualityError('no-progression', hint);
   return {
     focus, hint, identified_subject: SUBJECT_SET.has(r.identified_subject) ? r.identified_subject : draft.identified_subject, approved: r.approved === true,
     verdict, step_verdict, safe_to_show, hintUseful,
@@ -459,14 +495,14 @@ export async function runTutorFlow(rawInput, invokeModel) {
 
   // For ordinary hints and incorrect attempts, retain the strict server
   // answer-leak guard and the independent model review.
-  if (leak) throw new TutorEngineError('힌트에 정답이 섞일 수 있어 숨겼어요. 한 단계 더 쉬운 힌트를 요청해 주세요.');
+  if (leak) throw new HintQualityError('answer-leak', reviewed.hint);
   const safeFocus = answerLeakReason(reviewed.focus, input.original, privateAnswers)
     ? '문제의 조건과 구할 것을 확인했어요.' : reviewed.focus;
-  if (!reviewed.approved && normalize(reviewed.hint) === normalize(draft.hint)) {
-    throw new TutorEngineError('검토 단계에서 잘못된 힌트가 고쳐지지 않았어요. 다시 요청해 주세요.');
+  if (!reviewed.approved) {
+    throw new HintQualityError('review-not-repaired', reviewed.hint);
   }
   if (repeatsPreviousHint(reviewed.hint, input.recentDialogue))
-    throw new TutorEngineError('이전 힌트와 같은 설명이라 숨겼어요. 다시 요청해 주세요.');
+    throw new HintQualityError('repeats-prior-hint', reviewed.hint);
   const lead = verdict === 'incorrect' ? '아쉽지만 틀렸어. (X) 좋은 시도였어요! 🌷 ' : '';
   return {
     hint: `${lead}${reviewed.hint}`,

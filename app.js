@@ -694,10 +694,10 @@
         : error.status === 429
           ? '지금은 AI 요청 한도에 도달했어요. 잠시 뒤 다시 시도해 주세요.'
           : /(?:힌트|검토|학년|과목)/.test(error.message || '')
-            ? '힌트를 다시 다듬어 보았지만 아직 안전하고 정확한 설명을 만들지 못했어요. 🌷 같은 문제로 다시 질문해 주세요.'
+            ? '이번 힌트는 아직 충분히 확인되지 않았어요. 🌷 같은 문제에서 힌트 더 받기를 다시 눌러 주세요.'
             : '지금은 힌트를 받지 못했어요. 🌷 잠시 후 다시 질문해 주세요.';
       visibleReply = addMessage('teacher', safeNotice);
-      showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
+      showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.status === 422 ? '이번 힌트는 다시 준비해 주세요.' : error.message);
     } finally {
       state.busy = false;
       updateProgress();
