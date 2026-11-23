@@ -622,7 +622,7 @@
       problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null
     });
     return { hint:result.hint.trim(), problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
-      verdict:result.verdict==='correct'?'correct':result.verdict==='incorrect'?'incorrect':'uncertain',
+      verdict:['correct','incorrect','step_correct'].includes(result.verdict)?result.verdict:'uncertain',
       hintCount:Number.isInteger(result.hintCount)?result.hintCount:state.hintLevel,
       usedModel:typeof result.model==='string'?result.model:'', geminiRoute:result.geminiRoute||null };
   }

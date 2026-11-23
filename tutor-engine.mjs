@@ -14,7 +14,7 @@ const SUBJECT_SET = new Set(['국어', '수학', '사회', '과학', '영어']);
 const INTENTS = new Set(['ask_hint', 'answer_attempt', 'clarification']);
 const VERDICTS = new Set(['correct', 'incorrect', 'uncertain']);
 
-export const TUTOR_ENGINE_VERSION = 'v22-guided-one-step-answer-guard-20261123';
+export const TUTOR_ENGINE_VERSION = 'v24-correct-step-confirmation-20261123';
 
 export class TutorEngineError extends Error {
   constructor(message, status = 502) {
@@ -90,6 +90,16 @@ export function repeatsPreviousHint(hint, dialogue) {
 }
 
 function trim(text, limit) { return typeof text === 'string' ? text.trim().slice(0, limit) : ''; }
+// The client sends attemptText for a typed follow-up. Small models sometimes
+// mislabel a single-word reply such as "가시" as a new hint request; classify
+// clear short replies as possible answers without guessing whether they are
+// correct. Correctness still requires TWO independent agreeing model verdicts.
+export function isDirectAnswerCandidate(text) {
+  const value = trim(text, 400);
+  return value.length > 0 && value.length <= 90 &&
+    !/[?？]/.test(value) &&
+    !/(?:힌트|모르겠|모르겠어|알려|설명해|다시|왜|어떻게|무슨|무엇|도와줘)/.test(value);
+}
 
 export function cleanTutorInput(raw) {
   const original = trim(raw.problem, 1600);
@@ -120,6 +130,15 @@ const COMMON_RULES = `당신은 한국 초등학생에게 스스로 생각하도
 일반 힌트는 5회, 20회, 그 이상 반복되어도 정답을 공개하지 않습니다. 정답은 보호자가 비밀번호로 승인하는 별도의 서버 기능에서만 공개됩니다.
 문제의 핵심 조건·숫자·단위·대상을 정확히 유지하세요. 새 문제나 엉뚱한 수치를 만들지 마세요.
 아이가 직접 답안을 제출한 경우에만 정오를 판정할 수 있으며, 확실하지 않으면 uncertain으로 하세요.
+[아이의 답 검증과 새 힌트 생성을 분리]
+아이의 가장 최근 발언이 '가시', '3', '그림자'처럼 짧은 대답이라도 직전 선생님 힌트의 질문에 대한 답인지 먼저 판단하세요.
+원문 전체 문제의 최종 답과 직전 힌트의 작은 질문에 대한 답은 서로 다릅니다.
+verdict는 원문 전체 최종 답의 정오이며, step_verdict는 직전 선생님 질문의 정오입니다.
+직전 선생님이 '뾰족한 모습을 뭐라고 하나요?'라고 물은 뒤 아이가 '가시'라면 step_verdict=correct입니다.
+원문이 선인장이 그런 형태로 변한 이유를 묻는다면 '가시'는 부분 단계 정답이지 이유 전체의 정답이 아닙니다.
+이 경우 원문 verdict는 uncertain이고 step_verdict만 correct로 해야 합니다.
+정답 판정이 맞더라도 새로운 힌트가 부적절하다는 이유로 아이의 맞힌 답을 취소하거나 실패 처리하지 마세요.
+응답의 verdict/step_verdict는 각각 독립적으로 원문과 이전 질문을 확인하세요.
 
 [사고의 사다리: 개념 → 첫 행동 → 아이의 생각 → 다음 행동]
 (1) 질문의 의도, 구할 것과 이미 아는 조건을 내부적으로 파악하세요.
@@ -159,7 +178,7 @@ private_final_answer/answer_aliases는 서버의 정답 누출 검사에만 쓰�
 이전 대화에서 아이가 아직 하지 않은 단계를 건너뛰거나 숫자 결과를 미리 알려주면 안 됩니다.
 정답과 풀이 전체, 최종 대입식·등식·정답 단어는 hint에 적지 마세요.
 반드시 JSON 한 개만 출력:
-{"focus":"정답을 포함하지 않는 문제의 목표","given_facts":["원문 조건만"],"child_intent":"ask_hint|answer_attempt|clarification","verdict":"correct|incorrect|uncertain","private_final_answer":"서버 전용 정답, 모호하면 빈 문자열","answer_aliases":["정답의 대표적인 동의 표현"],"step_goal":"현재 힌트로 아이가 하게 될 작은 행동 하나","hint":"쉬운 개념 1문장 + 첫 행동을 묻는 1문장"}.`;
+{"focus":"정답을 포함하지 않는 문제의 목표","given_facts":["원문 조건만"],"child_intent":"ask_hint|answer_attempt|clarification","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"서버 전용 정답, 모호하면 빈 문자열","answer_aliases":["정답의 대표적인 동의 표현"],"step_goal":"현재 힌트로 아이가 하게 될 작은 행동 하나","hint":"쉬운 개념 1문장 + 첫 행동을 묻는 1문장"}.`;
   return { instructions, payload: contextPayload(input) };
 }
 
@@ -180,8 +199,11 @@ safe_to_show는 정답이나 풀이 전체를 노출하지 않고 한 단계만 
 contains_answer는 정답이 직접·간접 노출되면 true,
 contains_complete_solution은 최종 계산·완성 풀이를 제공하면 true입니다.
 반드시 JSON 한 개만 출력:
-{"approved":true|false,"focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"contains_answer":false,"contains_complete_solution":false,"reason":"내부 검토 메모"}.
-아이에게 답을 직접 제출한 경우가 아니면 correct/incorrect를 내리지 마세요.`;
+{"approved":true|false,"focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"contains_answer":false,"contains_complete_solution":false,"reason":"내부 검토 메모"}.
+아이에게 답을 직접 제출한 경우가 아니면 correct/incorrect를 내리지 마세요.
+아이의 답이 직전 힌트 질문에 맞으면 step_verdict=correct, 원문 최종 답이 아닌 경우 verdict=uncertain으로 유지하세요.
+검토자는 초안 verdict와 step_verdict를 그대로 베끼지 말고 각각 독립적으로 평가하세요.
+답이 맞았으나 다음 힌트 문장이 정답을 노출한다면 safe_to_show=false로 표시해도 됩니다. 서버는 안전한 칭찬만 보여줍니다.`;
   return { instructions, payload: { ...contextPayload(input), draft_to_check: draft } };
 }
 
@@ -196,7 +218,7 @@ function validateDraft(raw, input) {
   const hint = trim(d.hint, 400);
   if (!focus) throw new TutorEngineError('AI가 문제를 이해하지 못했어요. 질문을 다시 보내 주세요.');
   return {
-    focus, given_facts, child_intent, verdict, hint,
+    focus, given_facts, child_intent, verdict, step_verdict: VERDICTS.has(d.step_verdict) ? d.step_verdict : 'uncertain', hint,
     private_final_answer: trim(d.private_final_answer,160),
     answer_aliases: Array.isArray(d.answer_aliases) ? d.answer_aliases.filter(x=>typeof x==='string').slice(0,6).map(x=>trim(x,100)) : [],
     step_goal: trim(d.step_goal,140),
@@ -204,21 +226,30 @@ function validateDraft(raw, input) {
   };
 }
 
-function validateReview(raw, input) {
+function validateReview(raw, input, draft) {
   const r = stripJsonEnvelope(raw);
   if (!r || typeof r !== 'object' || Array.isArray(r))
     throw new TutorEngineError('AI가 힌트 정확도를 확인하지 못했어요. 다시 질문해 주세요.');
   const hint = trim(r.safe_hint, 400);
   const focus = trim(r.focus, 140);
-  if (!focus || !hasUsefulHint(hint, input.original))
+  const verdict = VERDICTS.has(r.verdict) ? r.verdict : 'uncertain';
+  const step_verdict = VERDICTS.has(r.step_verdict) ? r.step_verdict : 'uncertain';
+  // Verify a child's answer FIRST. An unsafe *next hint* must not cancel a
+  // separately confirmed correct answer. We never display that unsafe hint.
+  const confirmedAnswer = !!input.attemptText && (draft.child_intent === 'answer_attempt' || isDirectAnswerCandidate(input.attemptText)) && (
+    (draft.verdict === 'correct' && verdict === 'correct') ||
+    (draft.step_verdict === 'correct' && step_verdict === 'correct')
+  );
+  const safe_to_show = r.safe_to_show === true && r.contains_answer === false &&
+    r.contains_complete_solution === false;
+  const hintUseful = !!focus && hasUsefulHint(hint, input.original);
+  if (!confirmedAnswer && !hintUseful)
     throw new TutorEngineError('힌트가 모호하거나 문제와 어긋나서 숨겼어요. 다시 힌트를 요청해 주세요.');
-  // Semantic safety labels are required: silently missing flags must NOT be
-  // interpreted as approval. Older model responses fail closed.
-  if (r.safe_to_show !== true || r.contains_answer !== false || r.contains_complete_solution !== false)
+  if (!confirmedAnswer && !safe_to_show)
     throw new TutorEngineError('힌트에 정답이나 완성된 풀이가 섞일 수 있어 표시하지 않았어요. 다시 요청해 주세요.');
   return {
     focus, hint, approved: r.approved === true,
-    verdict: VERDICTS.has(r.verdict) ? r.verdict : 'uncertain',
+    verdict, step_verdict, safe_to_show, hintUseful,
     private_final_answer: trim(r.private_final_answer,160),
     answer_aliases: Array.isArray(r.answer_aliases) ? r.answer_aliases.filter(x=>typeof x==='string').slice(0,6).map(x=>trim(x,100)) : [],
   };
@@ -233,38 +264,57 @@ export async function runTutorFlow(rawInput, invokeModel) {
   const draftPrompt = makeDraftPrompt(input);
   const draft = validateDraft(await invokeModel({ stage: 'draft', ...draftPrompt }), input);
   const reviewPrompt = makeReviewPrompt(input, draft);
-  const reviewed = validateReview(await invokeModel({ stage: 'review', ...reviewPrompt }), input);
+  const reviewed = validateReview(await invokeModel({ stage: 'review', ...reviewPrompt }), input, draft);
+  const isAnswerAttempt = !!input.attemptText && (draft.child_intent === 'answer_attempt' || isDirectAnswerCandidate(input.attemptText));
+  const verdict = isAnswerAttempt && reviewed.verdict === draft.verdict &&
+    (draft.verdict === 'correct' || draft.verdict === 'incorrect')
+    ? draft.verdict : 'uncertain';
+  const stepCorrect = isAnswerAttempt && draft.step_verdict === 'correct' &&
+    reviewed.step_verdict === 'correct';
+
+  // A child's own correct answer may be acknowledged; this text is a fixed
+  // server-authored response, not model-generated and cannot leak the answer.
+  // Crucially, grading comes BEFORE validation of any proposed next hint.
+  if (verdict === 'correct') {
+    return {
+      hint: '정답이야! (O) 스스로 생각해서 문제를 해결했어요. 🌟',
+      verdict: 'correct',
+      problemFocus: '아이가 스스로 해결한 문제예요.',
+      reviewed: true,
+    };
+  }
   const privateAnswers = answerCandidates(draft, reviewed);
-  // Independent answer-aware server guard. The model's private answer or
-  // aliases never go to the browser, even if the child asks for them.
-  const leak = answerLeakReason(reviewed.hint, input.original, privateAnswers);
+  const leak = reviewed.hintUseful && reviewed.safe_to_show
+    ? answerLeakReason(reviewed.hint, input.original, privateAnswers)
+    : 'unsafe-next-hint';
+  if (stepCorrect) {
+    // Correct at the *current intermediate step*, but not yet confirmed as
+    // the complete original answer. Never mark the whole problem as solved.
+    // If the next hint is safe and on topic, keep it; otherwise a short
+    // non-revealing bridge avoids showing the model's leaked answer.
+    const canUseNextHint = !leak && reviewed.approved &&
+      !repeatsPreviousHint(reviewed.hint, input.recentDialogue);
+    return {
+      hint: canUseNextHint
+        ? `정답이야! (O) ${reviewed.hint}`
+        : '정답이야! (O) 방금 물어본 특징을 잘 찾아냈어요. 그 특징이 문제 속 상황에서 어떤 역할을 하는지 생각해 볼까요?',
+      verdict: 'step_correct',
+      problemFocus: '방금 단계까지 잘 해결했어요.',
+      reviewed: true,
+    };
+  }
+
+  // For ordinary hints and incorrect attempts, retain the strict server
+  // answer-leak guard and the independent model review.
   if (leak) throw new TutorEngineError('힌트에 정답이 섞일 수 있어 숨겼어요. 한 단계 더 쉬운 힌트를 요청해 주세요.');
-  // The "AI understood the problem" label is also visible to the child.
-  // A short static label is safer than leaking an accidental answer in focus.
   const safeFocus = answerLeakReason(reviewed.focus, input.original, privateAnswers)
     ? '문제의 조건과 구할 것을 확인했어요.' : reviewed.focus;
   if (!reviewed.approved && normalize(reviewed.hint) === normalize(draft.hint)) {
     throw new TutorEngineError('검토 단계에서 잘못된 힌트가 고쳐지지 않았어요. 다시 요청해 주세요.');
   }
-
-  // A submitted answer must be recognized as an answer by BOTH independent
-  // stages and both must agree on the verdict. Otherwise avoid false grading.
-  const isAnswerAttempt = !!input.attemptText && draft.child_intent === 'answer_attempt';
-  const verdict = isAnswerAttempt && reviewed.verdict === draft.verdict &&
-    (draft.verdict === 'correct' || draft.verdict === 'incorrect')
-    ? draft.verdict : 'uncertain';
-
-  if (verdict === 'correct') {
-    return {
-      hint: '정답이야! 정말 잘했어요! 🌟 스스로 생각해서 문제를 해결했네요.',
-      verdict,
-      problemFocus: '아이가 스스로 해결한 문제예요.',
-      reviewed: true,
-    };
-  }
   if (repeatsPreviousHint(reviewed.hint, input.recentDialogue))
     throw new TutorEngineError('이전 힌트와 같은 설명이라 숨겼어요. 다시 요청해 주세요.');
-  const lead = verdict === 'incorrect' ? '좋은 시도예요! 🌷 ' : '';
+  const lead = verdict === 'incorrect' ? '아쉽지만 틀렸어. (X) 좋은 시도였어요! 🌷 ' : '';
   return {
     hint: `${lead}${reviewed.hint}`,
     verdict,
