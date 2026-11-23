@@ -166,7 +166,7 @@ test('same prior hint is not repeated after a new hint request', async () => {
 test('student correct answer is praised even if review proposes an old hint', async () => {
   const q = '12와 18의 최대공약수는 무엇인가요?';
   const h = '최대공약수는 두 수를 모두 나누는 가장 큰 약수예요. 먼저 12를 나누어떨어지게 하는 수를 적어 볼까요?';
-  const grader = stages({focus:'공약수 찾기',hint:h,draftIntent:'answer_attempt',draftVerdict:'correct'});
+  const grader = stages({focus:'공약수 찾기',hint:h,final:'6',draftIntent:'answer_attempt',draftVerdict:'correct'});
   const result=await runTutorFlow(makeInput(q,{attemptText:'6',messages:[{role:'user',content:q},{role:'assistant',content:h},{role:'user',content:'답은 6이야'}]}),grader.invokeModel);
   assert.equal(result.verdict,'correct');
 });
@@ -227,4 +227,81 @@ test('v22: safe intermediate question remains visible; private answers stay serv
   assert.equal(r.hint,SAFE_GCD);
   assert.equal(Object.keys(r).some(k=>k.startsWith('private')),false);
   assert.deepEqual(answerCandidates({private_final_answer:'6'},{private_final_answer:'6',answer_aliases:['여섯']}),['6','여섯']);
+});
+
+// v24: An answer to the immediately preceding small hint should be rewarded,
+// even when a model proposes a leaky next hint that must not be shown.
+test('v24: correct short intermediate reply 가시 is praised, unsafe following hint hidden', async () => {
+  const original = '사막의 선인장 잎이 다른 식물과 다른 까닭은 무엇인가요?';
+  const previous = '비가 적은 곳의 식물은 몸속 물을 지키는 게 중요해요. 선인장에서 뾰족하게 나 있는 모습은 무엇일까요?';
+  const unsafe = '그것은 가시예요. 선인장의 잎은 수분 증발을 줄이기 위해 가시가 된 거예요.';
+  const answer = await runTutorFlow(makeInput(original, {
+    subject:'과학', attemptText:'가시', hintLevel:2,
+    messages:[{role:'user',content:original},{role:'assistant',content:previous},{role:'user',content:'가시'}]
+  }), async ({stage}) => JSON.stringify(stage==='draft' ? {
+    focus:'잎의 모양과 역할 이해',child_intent:'answer_attempt',verdict:'uncertain',step_verdict:'correct',
+    private_final_answer:'수분 증발을 줄이기 위해서',hint:unsafe
+  } : {
+    focus:'잎의 역할 이해',approved:false,verdict:'uncertain',step_verdict:'correct',
+    private_final_answer:'수분 증발을 줄이기 위해서',safe_hint:unsafe,
+    safe_to_show:false,contains_answer:true,contains_complete_solution:true
+  }));
+  assert.equal(answer.verdict,'step_correct');
+  assert.match(answer.hint,/^정답이야! \(O\)/);
+  assert.doesNotMatch(answer.hint,/수분 증발/);
+  assert.doesNotMatch(JSON.stringify(answer),/private_final_answer|answer_aliases/);
+});
+
+test('v24: correct full answer is praised even when follow-up hint is invalid', async () => {
+  const original = '12와 18의 최대공약수는 무엇인가요?';
+  const response = await runTutorFlow(makeInput(original, {
+    attemptText:'6', hintLevel:2,
+    messages:[{role:'user',content:original},{role:'assistant',content:SAFE_GCD},{role:'user',content:'6'}]
+  }), async ({stage}) => JSON.stringify(stage==='draft' ? {
+    focus:'공약수 찾기', child_intent:'answer_attempt', verdict:'correct', private_final_answer:'6',hint:'6이에요'
+  } : {
+    focus:'정답은 6', approved:false, verdict:'correct',safe_hint:'',private_final_answer:'6',
+    safe_to_show:false,contains_answer:true,contains_complete_solution:false
+  }));
+  assert.equal(response.verdict,'correct');
+  assert.match(response.hint,/^정답이야! \(O\)/);
+  assert.doesNotMatch(response.hint,/6/);
+});
+
+test('v24: only one reviewer agreeing with an answer cannot mark it correct', async () => {
+  const original = '12와 18의 최대공약수는 무엇인가요?';
+  const mocked = stages({focus:'공약수 찾기', hint:SAFE_GCD,final:'6',draftIntent:'answer_attempt',draftVerdict:'correct',reviewVerdict:'uncertain'});
+  const response = await runTutorFlow(makeInput(original, {
+    attemptText:'6',messages:[{role:'user',content:original},{role:'user',content:'6'}]
+  }),mocked.invokeModel);
+  assert.equal(response.verdict,'uncertain');
+  assert.doesNotMatch(response.hint,/정답이야/);
+});
+
+test('v24: ordinary hint still rejects a completed answer even when flags wrongly approve', async () => {
+  const original = '12와 18의 최대공약수는 무엇인가요?';
+  await assert.rejects(() => runTutorFlow(makeInput(original), async ({stage}) => JSON.stringify(stage==='draft' ? {
+    focus:'공약수 찾기',child_intent:'ask_hint',verdict:'uncertain',private_final_answer:'6',hint:SAFE_GCD
+  } : {
+    focus:'공약수 찾기',safe_hint:'두 수의 가장 큰 공약수는 6이에요. 이제 다음 문제로 넘어갈까요?',
+    verdict:'uncertain',step_verdict:'correct',private_final_answer:'6',approved:true,
+    safe_to_show:true,contains_answer:false,contains_complete_solution:false
+  })), TutorEngineError);
+});
+
+
+test('v24: single-word reply may be graded even if model intent label is wrong', async () => {
+  const original = '선인장이 물을 아끼기 위해 잎의 모양을 바꾼 것은 무엇인가요?';
+  const result = await runTutorFlow(makeInput(original, {
+    subject:'과학', attemptText:'가시',
+    messages:[{role:'user',content:original},{role:'assistant',content:'어떤 뾰족한 모양으로 바뀌었을까요?'},{role:'user',content:'가시'}]
+  }), async ({stage}) => JSON.stringify(stage==='draft' ? {
+    focus:'잎의 모양',child_intent:'ask_hint',verdict:'correct',private_final_answer:'가시',hint:'가시가 답이에요.'
+  } : {
+    focus:'잎의 모양',safe_hint:'',verdict:'correct',private_final_answer:'가시',
+    safe_to_show:false,contains_answer:true,contains_complete_solution:true
+  }));
+  assert.equal(result.verdict,'correct');
+  assert.match(result.hint,/^정답이야! \(O\)/);
+  assert.doesNotMatch(result.hint,/가시/);
 });
