@@ -66,7 +66,7 @@ function aiQuotaExceeded(req) {
   return null;
 }
 
-const HINT_ENGINE_VERSION = 'v19-direct-start-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v20-clear-hints-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
