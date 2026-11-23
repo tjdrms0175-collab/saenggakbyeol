@@ -14,7 +14,7 @@ const SUBJECT_SET = new Set(['국어', '수학', '사회', '과학', '영어', '
 const INTENTS = new Set(['ask_hint', 'answer_attempt', 'clarification']);
 const VERDICTS = new Set(['correct', 'incorrect', 'uncertain']);
 
-export const TUTOR_ENGINE_VERSION = 'v28-final-versus-step-20261123';
+export const TUTOR_ENGINE_VERSION = 'v29-grade-aware-all-subjects-20261123';
 
 export class TutorEngineError extends Error {
   constructor(message, status = 502) {
@@ -218,6 +218,64 @@ verdict는 원문 전체 최종 답의 정오이며, step_verdict는 직전 선�
 국어·사회·과학은 친숙한 사례로 추론을 돕되 정답 개념을 그대로 발설하지 않습니다.
 영어는 앞뒤 문맥과 이미 아는 단어를 이용해 유추하게 합니다.
 "어떤 숫자?", "한번 생각해 보세요" 등 모든 문제에 붙일 수 있는 빈말은 사용하지 않습니다.`;
+/** Every subject follows a different learning path at each selected grade.
+ * This rubric is injected into BOTH the creator and the independent reviewer.
+ * The user selects a grade, not an IQ/ability label or a subject.
+ */
+const GRADE_TEACHING_RUBRIC = Object.freeze({
+  '초1~2': Object.freeze({
+    goal: '손으로 해 볼 수 있는 행동과 익숙한 일상 장면으로 접근. 어려운 개념 이름부터 설명하지 말고, 한 번에 아주 작은 관찰·선택·셈 하나만 물어요.',
+    language: '쉽고 짧은 말, 짧은 두 문장. 한 번에 새로운 전문 용어를 꺼내지 않아요. 반드시 필요한 용어는 가까운 생활 말로 풀어 주세요.',
+    methods: Object.freeze({
+      '수학': '사탕·블록·손가락·그림처럼 눈에 보이는 물건으로 수를 묶고 세게 해요. 복잡한 식이나 계산 순서를 여러 개 말하지 말고 첫 묶음·첫 수 한 번만 찾게 해요.',
+      '과학': '물·햇빛·그림자·식물처럼 아이가 본 일을 떠올리게 해요. 어떻게 생겼는지, 무엇이 달라졌는지 관찰을 한 번 물어요. 원인이나 학술 명칭을 먼저 말하지 마세요.',
+      '영어': '그림·동작·익숙한 단어·앞뒤 상황을 활용해 한 단어의 쓰임을 추측하게 해요. 문장 전체의 번역이나 어려운 문법 명칭을 말하지 마세요.',
+      '국어': '짧은 문장 속 인물·행동·마음·낱말 한 가지를 가리키게 해요. 일상 대화나 동화의 한 장면과 연결하고, 글의 결론이나 완성 문장을 대신 쓰지 마세요.',
+      '사회': '우리 반 약속·가족 역할·동네에서 겪는 일로 비유해요. 나라의 제도·기관·역사의 답 이름을 먼저 내놓지 말고 가까운 역할 하나부터 떠올리게 해요.',
+      '기타': '먼저 아이가 직접 본 것, 겪은 것, 알고 있는 것을 묻고 작은 행동 한 가지만 제안해요.'
+    })
+  }),
+  '초3~4': Object.freeze({
+    goal: '생활 사례에서 교과 개념으로 다리를 놓아요. 비교하거나 분류하는 한 가지 구체적인 과정을 안내하고, 아이가 스스로 개념에 이름을 붙이게 해요.',
+    language: '교과 용어는 필요할 때 하나만 사용하고 바로 쉬운 말로 풀어 주세요. 두 문장 안에서 무엇을 비교·찾아야 할지 분명하게 물어요.',
+    methods: Object.freeze({
+      '수학': '주어진 수가 전체·부분·기준량·묶음 중 무엇인지 먼저 구별하게 해요. 그림이나 표를 만들고 어떤 연산을 쓸지 결정하는 한 단계만 묻고 결과를 대신 계산하지 마세요.',
+      '과학': '관찰한 사실과 예상되는 이유를 구분해요. 두 상황을 비교하거나 한 조건만 바꿔 본다면 무엇이 달라질지 질문해요. 정답 용어를 먼저 밝히지 마세요.',
+      '영어': '주어·동작·시간 표현 또는 앞뒤 문장 중 단서 하나를 고르게 해요. 익숙한 단어를 이용해 모르는 표현의 뜻을 추론하게 하고 완성 번역은 주지 마세요.',
+      '국어': '글에서 근거가 되는 문장이나 단어를 찾아 인물의 마음·중심 생각·문단 내용을 비교하게 해요. 낱말 뜻은 문맥에서 유추하도록 해요.',
+      '사회': '학교·지역사회 사례와 법·역사·경제·지리 개념을 연결해요. 기관의 하는 일이나 사건의 앞뒤 관계를 한 가지 비교하게 하고 답 이름은 숨겨요.',
+      '기타': '익숙한 사례를 먼저 제시하고 분류·비교·근거 찾기 가운데 한 행동만 요청해요.'
+    })
+  }),
+  '초5~6': Object.freeze({
+    goal: '교과 개념 간 관계와 근거를 찾아 스스로 결론 내리게 해요. 구할 대상과 주어진 조건을 정확히 구분하고, 주장·근거 또는 원인·결과 가운데 한 고리를 스스로 완성하게 해요.',
+    language: '학년 수준의 교과 용어를 사용해도 되지만 필요한 말은 짧게 뜻을 설명해요. 원리 한 문장 + 구체적인 추론 질문 한 문장으로 답을 기다려요.',
+    methods: Object.freeze({
+      '수학': '공식의 의미와 기준량·미지수·단위 사이의 관계를 짚어요. 식을 세우거나 타당성을 검산할 첫 단계 하나만 요청하고 중간 결과나 최종 답을 대신 계산하지 마세요.',
+      '과학': '변인·관찰 결과·원인과 결과를 구분하고 근거를 추론하게 해요. 어떤 조건이 바뀌면 결과가 어떻게 달라질지 한 가지 예측을 물어요. 결론은 대신 말하지 마세요.',
+      '영어': '시제·문장 구조·연결어·문맥 단서를 학습 수준에 맞게 활용해요. 표현 하나의 문법적 역할이나 의미를 추론하게 하고 정답 번역·완성 문장은 피하세요.',
+      '국어': '주장과 근거·글의 구조·표현 효과를 구분해요. 글에서 뒷받침 문장을 찾거나 특정 표현을 쓴 이유를 추론하는 질문 하나를 하세요.',
+      '사회': '제도의 역할과 권한, 원인과 결과, 역사·사회적 관점을 연결해요. 예를 들어 삼권분립을 묻는 문제라면 기관 이름을 밝히지 말고 입법·행정·사법 중 어떤 권한인지 먼저 판단하게 해요.',
+      '기타': '관련 개념의 관계나 근거를 찾되 단서를 하나만 선택해 스스로 결론을 내리게 해요.'
+    })
+  })
+});
+
+export function gradeTeachingGuidance(grade) {
+  const chosen = GRADE_SET.has(grade) ? grade : '초3~4';
+  const profile = GRADE_TEACHING_RUBRIC[chosen];
+  return `[선택된 학년: ${chosen} — 이번 요청에서 실제로 따라야 할 교수법]
+이 학년은 학생의 지능·성취도를 판정한 값이 아닙니다. 문제의 실제 난이도와 지금까지의 아이 반응도 참고하며 필요한 경우 더 쉬운 첫 단계부터 시작하세요.
+목표: ${profile.goal}
+언어: ${profile.language}
+[과목 자동 판별 후 아래 해당 과목의 방식만 적용 — 수학·과학·영어·국어·사회 전 과목 공통 지원]
+${Object.entries(profile.methods).map(([subject,method])=>`${subject}: ${method}`).join('\n')}
+[힌트 진행 기준]
+원문에서 물은 정답·핵심 조건을 그대로 지키세요. 해당 학년과 실제 과목에 맞는 예시와 사고 행동을 골라, 쉬운 원리 1문장 + 실제로 해 볼 질문 1문장으로 마치세요.
+학년이 높다는 이유로 정답에 더 가까운 값을 공개하지 말고, 학년이 낮다는 이유로 틀린 비유를 쓰거나 수학·과학 원리를 왜곡하지 마세요.
+아이가 중간 질문에 답하면 중간 단계만 판정해 칭찬하고, 원래 문제의 최종 답과 혼동하지 마세요.`;
+}
+
 function contextPayload(input) {
   return {
     original_problem_verbatim: input.original,
@@ -235,6 +293,7 @@ function contextPayload(input) {
 
 export function makeDraftPrompt(input) {
   const instructions = `${COMMON_RULES}
+${gradeTeachingGuidance(input.grade)}
 [1차 초안: AI 문제 해석 + 비공개 답 + 한 단계 힌트]
 원문 문제를 내부에서 직접 풀어서 비공개 private_final_answer에 정답을 적으세요. 여러 정답이 가능한 열린 질문이라면 빈 문자열로 두세요.
 private_final_answer/answer_aliases는 서버의 정답 누출 검사에만 쓰이고 학생에게 표시되지 않습니다. 절대 hint/focus에 복사하지 마세요.
@@ -249,6 +308,7 @@ identified_subject는 문제 원문만 분석해 국어·수학·사회·과학�
 
 export function makeReviewPrompt(input, draft) {
   const instructions = `${COMMON_RULES}
+${gradeTeachingGuidance(input.grade)}
 [독립 검토자 역할] [2차 독립 검토: 정답 노출을 반드시 확인]
 문제를 원문으로 다시 독립적으로 풀어 private_final_answer를 적되, 이 값은 학생에게 보내지 않는 내부 검사 자료입니다.
 초안의 private_final_answer와 다르다면 초안을 신뢰하지 말고 원문을 다시 확인하세요.
@@ -258,14 +318,17 @@ export function makeReviewPrompt(input, draft) {
 3. 한 번에 두 단계 이상 계산하거나, 최종 결론을 떠먹여 주는가?
 4. 이미 전달한 힌트를 그대로 반복하거나, 막연하게 질문을 다시 말하는가?
 5. 개념 하나를 짧게 설명하고, 아이가 직접 할 다음 행동 하나만 묻는가?
+6. 선택된 학년의 말과 단계 크기에 맞으며, 과목을 제대로 인식해 해당 교과의 탐구 방법을 사용했는가?
+7. 초1~2에는 교과 용어를 그대로 던지지 않았는가? 초3~4에는 생활과 개념을 연결했는가? 초5~6에는 원리·근거를 따져 볼 기회가 있는가?
 위 질문에서 조금이라도 위험하면 safe_hint를 더 기초적인 첫 단계로 고치세요.
 '다음 단계'가 사실상 최종 답이라면 직접 답을 묻고 멈추세요. 여러 번 힌트를 요청하더라도 답 자체는 쓰지 마세요.
+grade_fit은 선택된 학년에 맞는 어휘와 단계일 때만 true, subject_method_fit은 실제 과목에 맞는 풀이 방식일 때만 true입니다. 두 값 중 하나라도 false면 적절한 safe_hint로 고친 후 다시 검사해야 합니다.
 safe_to_show는 정답이나 풀이 전체를 노출하지 않고 한 단계만 안내할 때에만 true,
 contains_answer는 정답이 직접·간접 노출되면 true,
 contains_complete_solution은 최종 계산·완성 풀이를 제공하면 true입니다.
 identified_subject는 문제 원문을 독립적으로 판단하여 국어·수학·사회·과학·영어·기타 중 하나만 쓰세요.
 반드시 JSON 한 개만 출력:
-{"approved":true|false,"identified_subject":"수학","focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"contains_answer":false,"contains_complete_solution":false,"reason":"내부 검토 메모"}.
+{"approved":true|false,"identified_subject":"수학","focus":"정답 비공개인 문제 목표","safe_hint":"개념 하나 + 첫 행동 질문, 딱 두 문장","verdict":"correct|incorrect|uncertain","step_verdict":"correct|incorrect|uncertain","private_final_answer":"독립 검산한 정답, 모호하면 빈 문자열","answer_aliases":["정답 동의 표현"],"safe_to_show":true|false,"grade_fit":true|false,"subject_method_fit":true|false,"contains_answer":false,"contains_complete_solution":false,"reason":"내부 검토 메모"}.
 아이에게 답을 직접 제출한 경우가 아니면 correct/incorrect를 내리지 마세요.
 아이의 답이 직전 힌트 질문에 맞으면 step_verdict=correct, 원문 최종 답이 아닌 경우 verdict=uncertain으로 유지하세요. 정답을 검증할 때 초안의 private_final_answer와 자신의 private_final_answer가 모두 원문에서 마지막에 구하라는 값인지 확인하세요. 최종 답과 중간 답을 혼동하면 correct로 판정하지 마세요.
 검토자는 초안 verdict와 step_verdict를 그대로 베끼지 말고 각각 독립적으로 평가하세요.
@@ -313,6 +376,12 @@ function validateReview(raw, input, draft) {
     throw new TutorEngineError('힌트가 모호하거나 문제와 어긋나서 숨겼어요. 다시 힌트를 요청해 주세요.');
   if (!confirmedAnswer && !safe_to_show)
     throw new TutorEngineError('힌트에 정답이나 완성된 풀이가 섞일 수 있어 표시하지 않았어요. 다시 요청해 주세요.');
+  // Independent reviewer must reject explicitly flagged age/subject mismatch.
+  // Keep optional for compatibility with older mock providers, but request
+  // both fields in the v29 reviewer schema. Correct student attempts are
+  // handled separately and never revoked due to a poor *next* hint.
+  if (!confirmedAnswer && (r.grade_fit === false || r.subject_method_fit === false))
+    throw new TutorEngineError('학년이나 과목에 맞지 않는 힌트라 숨겼어요. 더 쉬운 단계로 다시 요청해 주세요.');
   return {
     focus, hint, identified_subject: SUBJECT_SET.has(r.identified_subject) ? r.identified_subject : draft.identified_subject, approved: r.approved === true,
     verdict, step_verdict, safe_to_show, hintUseful,
