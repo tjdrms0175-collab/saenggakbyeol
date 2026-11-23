@@ -689,7 +689,14 @@
         state.active = null; state.messages = []; state.hintLevel = 0;
         if (typed) $('#messageInput').value = typed;
       }
-      visibleReply = addMessage('teacher', error.name === 'AbortError' ? '자동 재연결을 중지했어요. 🌷 같은 문제를 다시 보내면 이어서 도와줄게요.' : '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 설정과 문제 원문을 확인해 주세요.');
+      const safeNotice = error.name === 'AbortError'
+        ? '자동 재연결을 중지했어요. 🌷 같은 문제를 다시 보내면 이어서 도와줄게요.'
+        : error.status === 429
+          ? '지금은 AI 요청 한도에 도달했어요. 잠시 뒤 다시 시도해 주세요.'
+          : /(?:힌트|검토|학년|과목)/.test(error.message || '')
+            ? '힌트를 다시 다듬어 보았지만 아직 안전하고 정확한 설명을 만들지 못했어요. 🌷 같은 문제로 다시 질문해 주세요.'
+            : '지금은 힌트를 받지 못했어요. 🌷 잠시 후 다시 질문해 주세요.';
+      visibleReply = addMessage('teacher', safeNotice);
       showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
     } finally {
       state.busy = false;

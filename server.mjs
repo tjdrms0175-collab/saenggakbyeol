@@ -66,7 +66,7 @@ function aiQuotaExceeded(req) {
   return null;
 }
 
-const HINT_ENGINE_VERSION = 'v28-final-answer-verification-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v30-auto-safety-repair-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -435,6 +435,30 @@ function retryErrorPayload(error) {
   if (Number.isInteger(error.retryAfterSeconds)) payload.retryAfterSeconds = error.retryAfterSeconds;
   return payload;
 }
+
+// Retry exactly once when the independent reviewer rejects a proposed hint.
+// Never retry on authentication, usage caps, timeouts, or network congestion;
+// these are handled by the existing reconnect and model-routing paths.
+function needsHintRepair(error) {
+  return error instanceof TutorEngineError && error.status === 502 &&
+    /(?:힌트가 모호|힌트에 정답|학년이나 과목에 맞지|잘못된 힌트가 고쳐지지|이전 힌트와 같은 설명|정답이 섞일 수 있어 숨겼)/.test(error.message);
+}
+const HINT_REPAIR_INSTRUCTION = `
+[추가 안전 재작성 지침 — 이전 힌트가 내부 검증에서 거절되었음]
+이전 문장을 반복하지 말고 처음 문제와 학년을 다시 읽으세요. 정답을 숨긴 상태로 문제의 첫 개념만 짚고 정확히 한 가지 쉬운 행동 질문을 만드세요.
+초1~2는 일상 한 장면을 관찰, 초3~4는 두 상황의 변화 한 가지 비교, 초5~6은 조건과 원인의 관계 한 가지를 묻습니다.
+최종 정답·완성 풀이·정답 동의어를 포함하지 마세요. 실패 이유나 검토 과정을 학생에게 설명하지 마세요.`;
+
+async function runTutorWithSafeRepair(body, invokeStage) {
+  try { return await runTutorFlow(body, invokeStage); }
+  catch (error) {
+    if (!needsHintRepair(error)) throw error;
+    // Two more calls (draft + independent review) at most, never a loop.
+    return runTutorFlow(body, ({instructions, ...request}) =>
+      invokeStage({...request, instructions: instructions + HINT_REPAIR_INSTRUCTION}));
+  }
+}
+
 async function computeTutorResponse(body) {
   const image = body?.imageDataUrl;
   if (image && (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/.test(image) || image.length > 4*1024*1024)) {
@@ -453,7 +477,7 @@ async function computeTutorResponse(body) {
     if (body.problemId && !progress) return {status:409,data:{error:'다른 문제의 학습 기록이에요. 새 문제를 눌러 다시 시작해 주세요.'}};
     const hintLevel = progress ? progress.hints + 1 : 1;
     let lastUsedModel = model;
-    const answer = await runTutorFlow({ ...body, hintLevel, hasPhoto: Boolean(image) },
+    const answer = await runTutorWithSafeRepair({ ...body, hintLevel, hasPhoto: Boolean(image) },
       createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:image, onModelUsed:m=>{lastUsedModel=m;}}));
     if (progress && answer.verdict !== 'correct') progress.hints++;
     return { status:200, data:{ ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
