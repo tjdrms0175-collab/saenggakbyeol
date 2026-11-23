@@ -542,9 +542,10 @@
     $('#apiConnectionStatus').textContent = '';
     delete $('#apiConnectionStatus').dataset.result;
   }
-  // v16: A single queued question is retried until the temporary outage clears.
-  // No timer runs when the AI is healthy; retries STOP as soon as a valid answer
-  // arrives. 401/403/404 and exhausted 429 quotas are never retried endlessly.
+  // v37: One question gets at most 3 network attempts (first + 2 retries).
+  // An error must never trigger an unbounded sequence of paid Gemini calls.
+  // Authentication and quota errors are not retried automatically.
+  const MAX_AUTO_RETRIES = 2;
   let reconnectOperation = null;
   function newTutorRequestId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
@@ -605,7 +606,6 @@
     reconnectOperation = operation;
     const body = JSON.stringify({...payload, retryRequestId:newTutorRequestId()});
     let retries = 0;
-    let quotaRetries = 0;
     try {
       while (!operation.controller.signal.aborted) {
         while (!navigator.onLine) await pauseBeforeRetry(15000, operation.controller.signal, source);
@@ -641,11 +641,15 @@
           operation.controller.signal.removeEventListener('abort', onAbort);
         }
         if (!failure.retryable) throw failure;
-        if (failure.status === 429 && ++quotaRetries >= 3) {
-          throw new Error('API 사용 한도가 계속 초과돼요. 자동 재연결을 중지했습니다. 무료 한도나 결제 상태를 확인해 주세요.');
+        // 429 from an upstream model can be a daily quota. The server already
+        // tries other Gemini models on 429, so waiting and resubmitting here
+        // would create unnecessary costs and repeated failed attempts.
+        if (failure.status === 429) throw failure;
+        if (retries >= MAX_AUTO_RETRIES) {
+          throw new Error('AI 연결이 계속 불안정해 자동 재시도를 중지했어요. 잠시 후 직접 다시 질문해 주세요.');
         }
         retries++;
-        // Exponential backoff + jitter, capped at 2 minutes. Prevents a thundering herd
+        // Exponential backoff + jitter, with a strict attempt cap. Prevents a thundering herd
         // and excessive API charges when Google is overloaded. Retry-After wins when set.
         const expMs = Math.min(120000, 4000 * 2 ** Math.min(retries-1,5));
         const jitter = Math.floor(Math.random() * Math.min(3000,expMs * .3));
