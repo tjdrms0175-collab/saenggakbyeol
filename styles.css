@@ -120,3 +120,17 @@
 /* v17 automatic Gemini model switch banner */
 #geminiRouteNotice:not([hidden]){display:block;background:#eef9f5;color:#257d68;border:1px solid #c7e9df;padding:12px 14px;border-radius:14px;font-weight:650;font-size:0.9rem;}
 #apiModelInput[readonly]{background:#f5f3fd;cursor:default;}
+
+/* v21: Keep the newly received tutor hint comfortably below the top edge. */
+.teacher .message-bubble { scroll-margin-block-start: 18px; }
+
+/* v23 — single continuous mobile scroll instead of nested chat + page scroll.
+   This is essential for Android Chrome / Samsung browser / installed PWA,
+   especially while the soft keyboard is closing after a question is sent. */
+@media (max-width: 750px) {
+  html { overflow-anchor: none; scroll-behavior: auto; }
+  .chat-card { height: auto; max-height: none; overflow: hidden; }
+  .chat-body { height: auto; max-height: none; min-height: 240px; flex: 0 0 auto; overflow: visible; overflow-anchor: none; }
+  .chat-bottom { overflow-anchor: none; }
+  .teacher .message-bubble { scroll-margin-block-start: 14px; }
+}

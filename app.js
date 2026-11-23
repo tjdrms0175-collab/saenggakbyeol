@@ -301,6 +301,7 @@
     document.querySelectorAll('.sample-prompt').forEach((btn) => { btn.disabled = state.busy; });
   }
   function resetConversation() {
+    cancelAnswerScroll();
     stopListening();
 
     voiceNotice('🎤 마이크를 누르면 질문을 글자로 바꿀 수 있어요.');
@@ -361,8 +362,58 @@
     }
     box.appendChild(content);
     $('#chatBody').appendChild(box);
-    $('#chatBody').scrollTop = $('#chatBody').scrollHeight;
+    // Desktop has an inner chat scroll; phones use one continuous PAGE scroll.
+    if (!window.matchMedia('(max-width:750px)').matches) {
+      $('#chatBody').scrollTop = $('#chatBody').scrollHeight;
+    }
     return box;
+  }
+  // v23: Galaxy/PWA mobile answer navigation. A fixed-height inner chat plus
+  // the outer page scroller caused scrollIntoView to leave the viewport at the
+  // composer. Mobile now uses one document scroller (see styles.css), and
+  // scrolls to the *new answer* after keyboard/viewport resize settles.
+  let answerScrollTimers = [];
+  let cancelAnswerScrollOnGesture = null;
+  function cancelAnswerScroll() {
+    answerScrollTimers.forEach(clearTimeout);
+    answerScrollTimers = [];
+    if (cancelAnswerScrollOnGesture) {
+      for (const type of ['touchstart','pointerdown','wheel','keydown']) {
+        window.removeEventListener(type, cancelAnswerScrollOnGesture, true);
+      }
+      cancelAnswerScrollOnGesture = null;
+    }
+  }
+  function positionTeacherReply(answer) {
+    if (!answer.isConnected) return;
+    if (!window.matchMedia('(max-width:750px)').matches) {
+      // Keep desktop's independent chat scroller intact.
+      answer.scrollIntoView({ behavior:'auto', block:'nearest', inline:'nearest' });
+      return;
+    }
+    // Do NOT focus the textarea: that reopens the Samsung keyboard and scrolls
+    // the page back down to the composer. Scroll the page, not the inner chat.
+    const page = document.scrollingElement || document.documentElement;
+    const visualTop = window.visualViewport?.offsetTop || 0;
+    const target = page.scrollTop + answer.getBoundingClientRect().top - visualTop - 14;
+    const maxScroll = Math.max(0, page.scrollHeight - page.clientHeight);
+    window.scrollTo(0, Math.max(0, Math.min(Math.round(target), maxScroll)));
+  }
+  function revealNewTutorReply(messageElement) {
+    if (!messageElement?.isConnected) return;
+    cancelAnswerScroll();
+    const answer = messageElement.querySelector('.message-bubble') || messageElement;
+    // Keyboard close / layout resize can arrive after the async Gemini reply.
+    // Reposition briefly, but immediately cancel if the student starts
+    // scrolling or typing, so the UI never fights a deliberate gesture.
+    requestAnimationFrame(() => requestAnimationFrame(() => positionTeacherReply(answer)));
+    if (!window.matchMedia('(max-width:750px)').matches) return;
+    cancelAnswerScrollOnGesture = () => cancelAnswerScroll();
+    for (const type of ['touchstart','pointerdown','wheel','keydown']) {
+      window.addEventListener(type, cancelAnswerScrollOnGesture, { capture:true, passive:true });
+    }
+    answerScrollTimers = [180, 450, 850, 1250].map(delay => setTimeout(() => positionTeacherReply(answer), delay));
+    answerScrollTimers.push(setTimeout(cancelAnswerScroll, 1450));
   }
   function makeProblem(question, photo) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -577,11 +628,16 @@
   }
   async function sendMessage(text, { fromHintButton = false, fromRecheck = false } = {}) {
     if (state.busy) return;
+    cancelAnswerScroll();
     const typed = (text || '').trim().slice(0, 1600);
     if (voice.listening) stopListening();
 
     const uploadedImage = state.photo ? state.photo.dataUrl : null;
     if (!typed && !uploadedImage) { showToast('질문을 적거나 사진을 올려 주세요!'); return; }
+    // Close the phone keyboard on send: retaining input focus made the browser
+    // jump to the question box even after a teacher reply had been rendered.
+    const focused = document.activeElement;
+    if (focused === $('#messageInput') || focused?.closest?.('#messageForm')) focused.blur();
     const isNew = !state.active;
     if (isNew) makeProblem(typed, !!uploadedImage);
     if (uploadedImage && state.active) state.active.photoDataUrl = uploadedImage; // kept only in memory for next hints
@@ -598,13 +654,14 @@
     state.busy = true;
     updateProgress();
     const pending = addMessage('teacher', '', { loading: true });
+    let visibleReply = null;
     try {
       const attemptText = !isNew && !fromHintButton && !fromRecheck && typed ? typed : '';
       const reply = await getLiveHint(uploadedImage || state.active?.photoDataUrl || null, attemptText, fromRecheck);
       state.hintLevel = reply.hintCount;
       showGeminiRouteNotice(reply);
       pending.remove();
-      addMessage('teacher', reply.hint, { focus: reply.problemFocus });
+      visibleReply = addMessage('teacher', reply.hint, { focus: reply.problemFocus });
       state.messages.push({ role: 'assistant', content: reply.hint });
       if (reply.verdict === 'correct') {
         updateRecord({ solved: true });
@@ -625,12 +682,12 @@
         state.active = null; state.messages = []; state.hintLevel = 0;
         if (typed) $('#messageInput').value = typed;
       }
-      addMessage('teacher', error.name === 'AbortError' ? '자동 재연결을 중지했어요. 🌷 같은 문제를 다시 보내면 이어서 도와줄게요.' : '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 설정과 문제 원문을 확인해 주세요.');
+      visibleReply = addMessage('teacher', error.name === 'AbortError' ? '자동 재연결을 중지했어요. 🌷 같은 문제를 다시 보내면 이어서 도와줄게요.' : '정확하지 않은 힌트는 보여주지 않을게요. 🌷 AI 설정과 문제 원문을 확인해 주세요.');
       showToast(error.name === 'AbortError' ? '연결 시간이 오래 걸리고 있어요.' : error.message);
     } finally {
       state.busy = false;
       updateProgress();
-      $('#messageInput').focus();
+      revealNewTutorReply(visibleReply);
     }
   }
   function markUnderstood() {
@@ -638,9 +695,10 @@
     updateRecord({ understood: true });
     addMessage('student', '이해했어요! 🌟');
     const encouragement = '와, 스스로 생각해 봤군요! 정말 멋져요! 🎉 다음 문제도 도전해 볼까요?';
-    addMessage('teacher', encouragement);
+    const confirmation = addMessage('teacher', encouragement);
     state.active = null; state.messages = [];
     updateProgress();
+    revealNewTutorReply(confirmation);
     showToast('오늘의 공부 기록에 반짝 별이 추가됐어요! ✨');
   }
   async function prepareImage(file) {
@@ -694,10 +752,14 @@
     document.body.style.overflow = 'hidden';
     (id === 'answerModal' ? $('#revealPinInput') : modal.querySelector('.close-modal')).focus();
   }
-  function closeModal(id) {
+  function closeModal(id, { restoreFocus = true } = {}) {
     $(`#${id}`).hidden = true;
     document.body.style.overflow = '';
-    (id === 'settingsModal' ? $('#settingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus();
+    // Restoring focus to the answer button after revealing a solution scrolls
+    // Android back down to the controls; skip it when displaying a reply.
+    if (restoreFocus) {
+      (id === 'settingsModal' ? $('#settingsBtn') : id === 'answerModal' ? $('#revealAnswerBtn') : $('#parentBtn')).focus({preventScroll:true});
+    }
   }
   function updateMode() {
     const onlineAI = true;
@@ -804,12 +866,14 @@
       if (!response.ok) throw Error(data.error || `서버 오류 (${response.status})`);
       if (typeof data.answer!=='string' || !data.answer.trim()) throw Error('AI 정답을 확인하지 못했어요.');
       const msg=`🔐 학부모 확인 후 공개한 정답: ${data.answer.trim()}${data.explanation?'\n\n풀이 설명: '+data.explanation:''}`;
-      addMessage('teacher',msg);
+      const revealedMessage = addMessage('teacher',msg);
       state.messages.push({role:'assistant',content:'보호자 확인 후 정답이 공개됐어요.'});
       state.answerShown=true;
       updateRecord({revealed:true});
       $('#revealPinInput').value='';
-      closeModal('answerModal');showToast('🔐 보호자 확인 후 정답을 공개했어요.');
+      closeModal('answerModal',{restoreFocus:false});
+      revealNewTutorReply(revealedMessage);
+      showToast('🔐 보호자 확인 후 정답을 공개했어요.');
     } catch(error) { status.textContent=error.name==='AbortError'?'정답 확인 요청이 너무 오래 걸렸어요. 다시 시도해 주세요.':`❌ ${error.message}`; }
     finally {state.busy=false;button.disabled=false;updateProgress();}
   }
