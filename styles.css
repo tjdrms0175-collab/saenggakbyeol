@@ -134,3 +134,71 @@
   .chat-bottom { overflow-anchor: none; }
   .teacher .message-bubble { scroll-margin-block-start: 14px; }
 }
+
+
+/* v25: compact one-row, three-column learning controls.
+   'Understanding the problem' is internal tutor context, not a second chat bubble. */
+.problem-understanding { display:none !important; }
+.assist-row {
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap:10px;
+  margin-bottom:12px;
+}
+.hint-progress {
+  display:flex;
+  align-items:center;
+  gap:7px;
+  width:100%;
+  min-width:0;
+}
+.hint-progress .understood {
+  margin-left:auto;
+  flex:0 0 auto;
+  border-radius:11px;
+  font-size:12px;
+  padding:8px 10px;
+  line-height:1.25;
+  white-space:nowrap;
+}
+.hint-actions {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  width:100%;
+}
+.hint-actions .assist-button {
+  box-sizing:border-box;
+  min-width:0;
+  width:100%;
+  min-height:44px;
+  padding:9px 6px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  font-size:13px;
+  line-height:1.35;
+  white-space:normal;
+  word-break:keep-all;
+  overflow-wrap:break-word;
+}
+@media(max-width:750px) {
+  .chat-bottom{padding-top:10px;}
+  .assist-row{gap:8px;margin-bottom:9px;}
+  .hint-progress{gap:5px;}
+  .hint-progress .progress-label,
+  .hint-progress .progress-counter{font-size:11px;white-space:nowrap;}
+  .hint-progress .star-track{font-size:18px;}
+  .hint-progress .understood{padding:8px 9px;font-size:11px;}
+  .hint-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;flex-wrap:nowrap;}
+  .hint-actions .assist-button{min-width:0;min-height:47px;font-size:clamp(10px,2.7vw,12px);padding:8px 3px;flex-basis:auto;}
+  .hint-actions .hint-recheck,
+  .hint-actions .answer-locked{min-width:0;flex-basis:auto;}
+}
+@media(max-width:350px) {
+  .hint-progress .progress-counter{font-size:10px;}
+  .hint-progress .understood{font-size:10px;padding:7px 6px;}
+  .hint-actions .assist-button{font-size:10px;padding:8px 2px;}
+}

@@ -96,12 +96,12 @@
               <span class="progress-label">받은 힌트</span>
               <span class="star-track" id="starTrack" aria-label="현재 힌트 0회">✦</span>
               <span class="progress-counter" id="progressCounter">0회 · 무제한</span>
-            </div>
-            <div class="hint-actions">
-              <button id="moreHintBtn" class="assist-button hint-more" type="button" disabled>💡 힌트 더 주세요</button>
-              <button id="recheckProblemBtn" class="assist-button hint-recheck" type="button" disabled>🔎 문제 다시 읽기</button>
-              <button id="revealAnswerBtn" class="assist-button answer-locked" type="button" disabled aria-label="정답 보기, 힌트 5회 이후 비밀번호 필요">🔒 정답 보기 (0/5)</button>
               <button id="understoodBtn" class="assist-button understood" type="button" disabled>🌟 이해했어요!</button>
+            </div>
+            <div class="hint-actions" role="group" aria-label="학습 도움 버튼">
+              <button id="moreHintBtn" class="assist-button hint-more" type="button" disabled aria-label="힌트 더 주세요">💡 힌트 더 받기</button>
+              <button id="recheckProblemBtn" class="assist-button hint-recheck" type="button" disabled aria-label="문제 다시 읽기">🔎 문제 다시 읽기</button>
+              <button id="revealAnswerBtn" class="assist-button answer-locked" type="button" disabled aria-label="정답 보기, 힌트 5회 이후 비밀번호 필요">🔒 정답 (0/5)</button>
             </div>
           </div>
           <div id="geminiRouteNotice" class="retry-notice" role="status" aria-live="polite" hidden></div>

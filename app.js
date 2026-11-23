@@ -290,7 +290,9 @@
     const reveal=$('#revealAnswerBtn');
     reveal.disabled=!canReveal;
     reveal.classList.toggle('is-unlocked',canReveal);
-    reveal.textContent=state.answerShown ? '✅ 정답 확인 완료' : canReveal ? '🔓 정답 보기 (비밀번호 필요)' : `🔒 정답 보기 (${Math.min(state.hintLevel,5)}/5)`;
+    // Keep the solution button short enough for the three-column mobile toolbar.
+    reveal.textContent = state.answerShown ? '✅ 정답 확인' : canReveal ? '🔓 정답 보기' : `🔒 정답 (${Math.min(state.hintLevel,5)}/5)`;
+    reveal.setAttribute('aria-label', state.answerShown ? '정답 확인 완료' : canReveal ? '정답 보기, 보호자 비밀번호 필요' : `정답 보기 잠김, 힌트 ${Math.min(state.hintLevel,5)}회 중 5회 필요`);
     $('#recheckProblemBtn').disabled = !state.active || state.busy;
     $('#understoodBtn').disabled = !state.active || state.busy;
     $('#sendBtn').disabled = state.busy;
@@ -348,12 +350,8 @@
       if (message) bubble.appendChild(document.createTextNode(message));
     }
     content.appendChild(bubble);
-    if (role === 'teacher' && !loading && focus) {
-      const understanding = document.createElement('div');
-      understanding.className = 'problem-understanding';
-      understanding.textContent = `🔎 문제 이해: ${focus.slice(0, 135)}`;
-      content.appendChild(understanding);
-    }
+    // Keep problem analysis as internal tutor context, not a learner-facing bubble.
+    // The user sees the hint only, freeing space on mobile.
     if (!loading) {
       const time = document.createElement('div');
       time.className = 'message-time';
