@@ -1,3 +1,9 @@
+# v40 입력 토큰 절약 안내
+
+최신 변경 사항과 배포 절차: [README_V40_INPUT_OPTIMIZATION.md](README_V40_INPUT_OPTIMIZATION.md)
+
+> 최신 v39 안내: `README_V39_SAFETY_PRIVACY.md`를 먼저 읽어 주세요. v27~v38 문서에 남아 있는 기본 비밀번호 `0000` 등의 설명은 과거 버전 설명입니다. v39에서는 기본 비밀번호가 제거되었습니다.
+
 # 📱 생각별 v8 모바일 설치형 앱
 
 **휴대폰 설치 및 HTTPS 배포 방법은 먼저 [`README_MOBILE.md`](README_MOBILE.md)를 읽어 주세요.**

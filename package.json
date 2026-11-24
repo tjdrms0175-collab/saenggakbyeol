@@ -1,13 +1,13 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.38.0",
+  "version": "1.40.0",
   "private": true,
   "type": "module",
   "description": "Grade-aware Socratic tutor across Korean, math, social studies, science, and English; AI-first answer safety",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs && node --check hint-safety.mjs && node --check photo-reader.mjs && node --check supabase-usage.mjs",
-    "test": "node --test final-vs-step.test.mjs gemini-failover.test.mjs grade-all-subjects.test.mjs hint-safety-integration.test.mjs parent-mode.test.mjs reconnect-integration.test.mjs router-integration.test.mjs tutor-engine.test.mjs usage-guard.test.mjs supabase-usage.test.mjs supabase-usage-integration.test.mjs v36-cost-optimized.test.mjs"
+    "check": "node --check app.js && node --check server.mjs && node --check tutor-engine.mjs && node --check hint-safety.mjs && node --check photo-reader.mjs && node --check supabase-usage.mjs && node --check ai-report.mjs",
+    "test": "node --test final-vs-step.test.mjs gemini-failover.test.mjs grade-all-subjects.test.mjs hint-safety-integration.test.mjs parent-mode.test.mjs reconnect-integration.test.mjs router-integration.test.mjs tutor-engine.test.mjs usage-guard.test.mjs supabase-usage.test.mjs supabase-usage-integration.test.mjs v39-safety.test.mjs ai-report.test.mjs v36-cost-optimized.test.mjs v40-input-efficiency.test.mjs"
   },
   "engines": {
     "node": ">=20"

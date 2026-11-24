@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { runTutorFlow, runAnswerRevealFlow, TutorEngineError, HintQualityError, TUTOR_ENGINE_VERSION } from './tutor-engine.mjs';
 import { parsePhotoReading, PhotoReadError, PHOTO_READ_PROMPT } from './photo-reader.mjs';
 import { makeUsageStore, UsageStorageError } from './supabase-usage.mjs';
+import { submitAiReport, ReportStorageError, REPORT_REASONS } from './ai-report.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -116,7 +117,7 @@ async function aiQuotaExceeded(req, kind='hint') {
   }
 }
 
-const HINT_ENGINE_VERSION = 'v38-supabase-usage-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v40-input-efficiency-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -151,7 +152,7 @@ function getTrackedProblem(body) {
 }
 // The changed answer-viewing PIN is kept as a sealed, HttpOnly, same-site cookie
 // on each guardian's device. Render free hosts have no persistent disk.
-// The default on a new browser is intentionally 0000 as requested.
+// v39: New browsers have NO default parent PIN. A guardian must configure one.
 const ANSWER_COOKIE = 'sb_answer_pin';
 const answerCookieKey = crypto.createHash('sha256').update('saenggakbyeol-answer-pin-v14|' +
   (process.env.ANSWER_PIN_SECRET || APP_ACCESS_PIN || process.env.GEMINI_API_KEY || SESSION_TOKEN)).digest();
@@ -175,7 +176,7 @@ function readAnswerPin(req) {
 function pinMatches(req, pin) {
   if (typeof pin !== 'string' || !/^\d{4,12}$/.test(pin)) return false;
   const record = readAnswerPin(req);
-  if (!record) return constantEquals(pin, '0000');
+  if (!record) return false; // A missing browser PIN never grants guardian access.
   const candidate = crypto.scryptSync(pin, Buffer.from(record.salt, 'hex'), 32);
   return crypto.timingSafeEqual(candidate, Buffer.from(record.hash, 'hex'));
 }
@@ -188,7 +189,7 @@ function sealAnswerPin(pin) {
   return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
 }
 function putAnswerCookie(req, res, pin) {
-  const secure=req.socket.encrypted || (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https');
+  const secure=process.env.NODE_ENV === 'production' || req.socket.encrypted || (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https');
   res.setHeader('Set-Cookie', `${ANSWER_COOKIE}=${sealAnswerPin(pin)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000${secure ? '; Secure' : ''}`);
 }
 function tooManyPinAttempts(req) {
@@ -205,6 +206,29 @@ function markWrongPin(req) {
   if (pinFailures.size > 500) pinFailures.clear();
 }
 function clearPinFailures(req) { pinFailures.delete(String(req.socket.remoteAddress || 'unknown')); }
+
+// Short-lived anonymous spam protection for AI reports. Raw IPs never enter Supabase.
+const reportAttempts = new Map();
+function reportRateLimited(req) {
+  const now=Date.now();
+  const chain=process.env.TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] || '') : '';
+  const ip=(chain.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown').slice(0,100);
+  const key=crypto.createHash('sha256').update('report-throttle|' + ip).digest('hex');
+  if (reportAttempts.size > 2000) {
+    for (const [id,row] of reportAttempts) if (now-row.start >= 3600000) reportAttempts.delete(id);
+    if (reportAttempts.size > 2000) reportAttempts.clear();
+  }
+  const row=reportAttempts.get(key);
+  if (row && now-row.start<3600000 && row.count>=5) return true;
+  reportAttempts.set(key, (!row || now-row.start>=3600000) ? {start:now,count:1} : {start:row.start,count:row.count+1});
+  return false;
+}
+function validGuardianPin(pin) {
+  return typeof pin==='string' && /^\d{6,12}$/.test(pin) &&
+    !/^(\d)\1+$/.test(pin) &&
+    pin!=='123456' && pin!=='12345678' && pin!=='123456789' && pin!=='1234567890' &&
+    pin!=='654321' && pin!=='87654321';
+}
 
 // v13: No keyword-driven hint engine; the model reads the original problem,
 // proposes a hint, and a separate model call verifies semantic fidelity.
@@ -278,13 +302,14 @@ function recordGeminiTokens(model, stage, metadata) {
   const output = Math.max(0,Number(metadata.candidatesTokenCount)||0);
   const thinking = Math.max(0,Number(metadata.thoughtsTokenCount)||0);
   const total = Math.max(0,Number(metadata.totalTokenCount)||input+output+thinking);
+  const cached = Math.max(0,Number(metadata.cachedContentTokenCount)||0);
   const key = `${model}/${stage}`;
-  const old = geminiTokenTotals.get(key) || { calls:0,input:0,output:0,thinking:0,total:0 };
+  const old = geminiTokenTotals.get(key) || { calls:0,input:0,output:0,thinking:0,total:0,cached:0 };
   const next = {calls:old.calls+1,input:old.input+input,output:old.output+output,
-    thinking:old.thinking+thinking,total:old.total+total};
+    thinking:old.thinking+thinking,total:old.total+total,cached:old.cached+cached};
   geminiTokenTotals.set(key,next);
   if (process.env.GEMINI_USAGE_LOG !== '0')
-    console.info(`[gemini-usage] model=${model} stage=${stage} input=${input} output=${output} thinking=${thinking} total=${total}`);
+    console.info(`[gemini-usage] model=${model} stage=${stage} input=${input} output=${output} thinking=${thinking} cached=${cached} total=${total}`);
 }
 
 // v37: Bound the actual outgoing Gemini attempts, including draft, independent
@@ -734,6 +759,7 @@ async function readProblemPhoto(req,res) {
 const STATIC = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
+  ['/privacy.html', ['privacy.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/sw.js', ['sw.js', 'text/javascript; charset=utf-8']],
@@ -766,6 +792,40 @@ const server = http.createServer(async (req, res) => {
       freeRouterGeminiReviewEnabled: process.env.FREELLMAPI_REVIEW_WITH_GEMINI === '1' && Boolean(process.env.GEMINI_API_KEY?.trim()),
       geminiRoute:geminiRouteInfo() });
   }
+  // v39: Children can flag AI replies in-app; only an approved reason and
+  // an explicitly opted-in AI-answer excerpt are stored. No question/photo/IP.
+  if (url.pathname === '/api/ai/report' && req.method === 'POST') {
+    if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 요청이에요.'});
+    if (reportRateLimited(req)) return json(res,429,{error:'신고가 너무 많아요. 한 시간 뒤 다시 이용해 주세요.'});
+    let body;
+    try { body=JSON.parse(await readBody(req)); } catch { return json(res,400,{error:'신고 내용을 확인해 주세요.'}); }
+    if (!body || !REPORT_REASONS.includes(body.reason) ||
+        (body.answerExcerpt !== undefined && (typeof body.answerExcerpt!=='string' || body.answerExcerpt.length>600))) {
+      return json(res,400,{error:'신고 사유 또는 답변 내용을 확인해 주세요.'});
+    }
+    try {
+      await submitAiReport({reason:body.reason, answerExcerpt:body.answerExcerpt || null});
+      return json(res,201,{ok:true,message:'신고가 접수됐어요. 알려줘서 고마워요.'});
+    } catch (e) {
+      if (e instanceof ReportStorageError) return json(res,503,{error:'신고를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'});
+      return json(res,503,{error:'신고 접수가 어려워요. 잠시 후 다시 시도해 주세요.'});
+    }
+  }
+  // v39: first-use PIN setup is intentionally separate from verification.
+  // This is a per-browser guardian gate, not proof of adult identity.
+  if (url.pathname === '/api/parent/setup' && req.method === 'POST') {
+    if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 요청이에요.'});
+    if (tooManyPinAttempts(req)) return json(res,429,{error:'시도가 너무 많아요. 10분 뒤 다시 이용해 주세요.'});
+    let body;
+    try { body=JSON.parse(await readBody(req)); } catch { return json(res,400,{error:'설정 내용을 확인해 주세요.'}); }
+    if (!validGuardianPin(body?.newPin) || body?.newPin!==body?.confirmPin || body?.guardianConfirmed!==true)
+      return json(res,400,{error:'보호자 확인 후, 서로 같은 안전한 숫자 6~12자리를 입력해 주세요.'});
+    try {
+      if (readAnswerPin(req)) return json(res,409,{error:'이미 비밀번호가 설정돼 있어요. 학부모 모드에서 변경해 주세요.'});
+      putAnswerCookie(req,res,body.newPin);
+      return json(res,201,{ok:true,pinConfigured:true,pinScope:'this-browser'});
+    } catch(e) { return json(res,e.status||400,{error:e.message}); }
+  }
   // v27: verify parent PIN server-side before the private report UI is unlocked.
   // No browser-side hard-coded PIN comparisons; wrong attempts are throttled.
   if (url.pathname === '/api/parent/verify' && req.method === 'POST') {
@@ -775,13 +835,14 @@ const server = http.createServer(async (req, res) => {
     try { body=JSON.parse(await readBody(req)); }
     catch (_) { return json(res,400,{error:'비밀번호를 확인해 주세요.'}); }
     try {
+      if (!readAnswerPin(req)) return json(res,428,{error:'이 브라우저의 학부모 비밀번호를 먼저 설정해 주세요.',code:'PARENT_SETUP_REQUIRED'});
       if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'학부모 비밀번호가 일치하지 않아요.'}); }
       clearPinFailures(req);
       return json(res,200,{verified:true});
     } catch (e) { return json(res,e.status||400,{error:e.message}); }
   }
   if (url.pathname === '/api/answer/config' && req.method === 'GET') {
-    try { return json(res, 200, {requiredHints:REQUIRED_HINTS, pinChanged:!!readAnswerPin(req), pinScope:'this-device'}); }
+    try { const pinConfigured=!!readAnswerPin(req); return json(res, 200, {requiredHints:REQUIRED_HINTS, pinConfigured, pinChanged:pinConfigured, pinScope:'this-browser'}); }
     catch (e) { return json(res,e.status||400,{error:e.message}); }
   }
   if (url.pathname === '/api/answer/change-pin' && req.method === 'POST') {
@@ -789,9 +850,9 @@ const server = http.createServer(async (req, res) => {
     if (tooManyPinAttempts(req)) return json(res, 429, {error:'입력 오류가 많아요. 10분 뒤 다시 시도해 주세요.'});
     let body;
     try { body=JSON.parse(await readBody(req)); } catch (_) { return json(res,400,{error:'입력을 확인해 주세요.'}); }
-    if (typeof body?.newPin !== 'string' || !/^\d{4,12}$/.test(body.newPin)) return json(res,400,{error:'새 비밀번호는 숫자 4~12자리로 입력해 주세요.'});
-    if (body.newPin === '0000') return json(res,400,{error:'새 비밀번호는 초기 비밀번호 0000과 다르게 정해 주세요.'});
+    if (!validGuardianPin(body?.newPin)) return json(res,400,{error:'새 비밀번호는 쉬운 반복·연속 숫자가 아닌 숫자 6~12자리로 입력해 주세요.'});
     try {
+      if (!readAnswerPin(req)) return json(res,428,{error:'이 브라우저의 학부모 비밀번호를 먼저 설정해 주세요.'});
       if (!pinMatches(req,body.oldPin)) { markWrongPin(req); return json(res,403,{error:'현재 비밀번호가 일치하지 않아요.'}); }
       putAnswerCookie(req,res,body.newPin);
       clearPinFailures(req);
@@ -808,6 +869,7 @@ const server = http.createServer(async (req, res) => {
       return json(res,403,{error:`같은 문제에서 힌트를 ${REQUIRED_HINTS}번 받은 뒤 정답을 볼 수 있어요.`,hintCount:tracked?.hints||0});
     if (tooManyPinAttempts(req)) return json(res,429,{error:'비밀번호 오류가 많아요. 10분 뒤 다시 시도해 주세요.'});
     try {
+      if (!readAnswerPin(req)) return json(res,428,{error:'이 브라우저의 학부모 비밀번호를 먼저 설정해 주세요.'});
       if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'정답 보기 비밀번호가 일치하지 않아요.'}); }
     } catch (e) { return json(res,e.status||400,{error:e.message}); }
     clearPinFailures(req);

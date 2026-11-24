@@ -63,6 +63,7 @@
     catch (_) { return {}; }
   })();
   let parentVerifiedPin = null; // Kept in memory only while parent mode is open.
+  let reportAnswerExcerpt = ''; // Ephemeral AI reply text; never queued in localStorage.
   const state = {
     grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.1-flash-lite' : savedPreferences.model) : 'gemini-3.1-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
@@ -402,6 +403,14 @@
       time.className = 'message-time';
       time.textContent = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
       content.appendChild(time);
+      if (role === 'teacher' && message) {
+        const reportButton=document.createElement('button');
+        reportButton.type='button'; reportButton.className='ai-report-button';
+        reportButton.textContent='🚩 이 답변 신고';
+        reportButton.setAttribute('aria-label','방금 나온 AI 답변 신고하기');
+        reportButton.addEventListener('click',()=>openAiReport(message));
+        content.appendChild(reportButton);
+      }
     }
     box.appendChild(content);
     $('#chatBody').appendChild(box);
@@ -716,7 +725,8 @@
       provider:state.provider, model:state.model, baseUrl:state.provider==='custom'?state.baseUrl:'',
       grade:state.grade, subject:state.subject, hintLevel:state.hintLevel,
       problemId:state.active?.id||'', attemptText, recheck,
-      problem:state.active?.question||'', messages:state.messages.slice(-12), imageDataUrl:photoDataUrl||null,
+      problem:state.active?.question||'', messages:state.messages.slice(-8),
+      imageDataUrl:state.active?.photoReviewed ? null : (photoDataUrl||null),
       photoTextConfirmed: Boolean(state.active?.photoReviewed)
     });
     return { hint:result.hint.trim(), detectedSubject: ['국어','수학','사회','과학','영어','기타'].includes(result.detectedSubject) ? result.detectedSubject : '자동', problemFocus:typeof result.problemFocus==='string'?result.problemFocus.slice(0,140):'',
@@ -1024,7 +1034,12 @@
   }
   function resetParentSession() {
     parentVerifiedPin = null;
-    $('#parentGate').hidden = false;
+    $('#parentSetup').hidden = true;
+    $('#parentSetupStatus').textContent='';
+    $('#setupParentPin').value='';
+    $('#setupParentPinConfirm').value='';
+    $('#guardianConfirm').checked=false;
+    $('#parentGate').hidden = true;
     $('#parentDashboard').hidden = true;
     $('#parentPinInput').value = '';
     $('#parentAuthStatus').textContent = '';
@@ -1041,14 +1056,89 @@
     const modal = $(`#${id}`);
     if (id === 'parentModal') resetParentSession();
     modal.hidden = false;
+    if (id === 'parentModal') refreshParentGate();
     document.body.style.overflow = 'hidden';
-    (id === 'parentModal' ? $('#parentPinInput') : modal.querySelector('.close-modal')).focus({preventScroll:true});
+    (id === 'parentModal' ? $('#parentModal .close-modal') : modal.querySelector('.close-modal')).focus({preventScroll:true});
   }
   function closeModal(id, { restoreFocus = true } = {}) {
     $(`#${id}`).hidden = true;
     document.body.style.overflow = '';
     if (id === 'parentModal') resetParentSession();
-    if (restoreFocus) $('#parentBtn').focus({preventScroll:true});
+    if (id === 'aiReportModal') reportAnswerExcerpt='';
+    if (restoreFocus && id === 'parentModal') $('#parentBtn').focus({preventScroll:true});
+  }
+  async function refreshParentGate() {
+    const setup=$('#parentSetup'), gate=$('#parentGate');
+    setup.hidden=true; gate.hidden=true;
+    try {
+      const response=await fetch('/api/answer/config',{cache:'no-store'});
+      const data=await response.json();
+      if (!response.ok) throw Error(data.error||'비밀번호 상태를 확인할 수 없어요.');
+      if ($('#parentModal').hidden || !$('#parentDashboard').hidden) return;
+      setup.hidden=!!data.pinConfigured;
+      gate.hidden=!data.pinConfigured;
+      (data.pinConfigured ? $('#parentPinInput') : $('#setupParentPin')).focus({preventScroll:true});
+    } catch(e) {
+      gate.hidden=false;
+      $('#parentAuthStatus').textContent='비밀번호 상태를 확인하지 못했어요. 다시 열어 주세요.';
+    }
+  }
+  async function createParentPin() {
+    const pin=$('#setupParentPin').value.trim();
+    const confirmPin=$('#setupParentPinConfirm').value.trim();
+    const button=$('#createParentPinBtn'), status=$('#parentSetupStatus');
+    if (!/^\d{6,12}$/.test(pin) || /^(\d)\1+$/.test(pin) ||
+        ['123456','12345678','123456789','1234567890','654321','87654321'].includes(pin)) {
+      status.textContent='반복·연속 숫자를 피해서 숫자 6~12자리로 설정해 주세요.'; return;
+    }
+    if (pin!==confirmPin) {status.textContent='확인 비밀번호가 달라요.'; return;}
+    if (!$('#guardianConfirm').checked) {status.textContent='보호자 확인란을 선택해 주세요.'; return;}
+    button.disabled=true; status.textContent='보호자 비밀번호를 설정하는 중이에요…';
+    try {
+      const response=await fetch('/api/parent/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({newPin:pin,confirmPin,guardianConfirmed:true})});
+      const data=await response.json().catch(()=>({}));
+      if (!response.ok || !data.ok) throw Error(data.error||'설정에 실패했어요.');
+      parentVerifiedPin=pin;
+      setupParentDashboard();
+      showToast('이 브라우저의 학부모 비밀번호를 설정했어요.');
+    } catch(e) {status.textContent='❌ '+e.message;}
+    finally {button.disabled=false;}
+  }
+  function setupParentDashboard() {
+    $('#parentPinInput').value='';
+    $('#setupParentPin').value='';
+    $('#setupParentPinConfirm').value='';
+    $('#parentSetup').hidden=true;
+    $('#parentGate').hidden=true;
+    $('#parentDashboard').hidden=false;
+    renderReport(); updateParentAnswerAccess(); refreshAnswerPinStatus();
+  }
+  function openAiReport(answer) {
+    reportAnswerExcerpt=String(answer||'').slice(0,600);
+    $('#aiReportReason').value='';
+    $('#aiReportIncludeExcerpt').checked=false;
+    $('#aiReportStatus').textContent='';
+    $('#sendAiReportBtn').disabled=false;
+    openModal('aiReportModal');
+    $('#aiReportReason').focus({preventScroll:true});
+  }
+  async function submitAiReportForm() {
+    const reason=$('#aiReportReason').value;
+    const status=$('#aiReportStatus'), button=$('#sendAiReportBtn');
+    if (!['unsafe','offensive','incorrect','privacy','other'].includes(reason)) {
+      status.textContent='신고 이유를 먼저 선택해 주세요.'; return;
+    }
+    const answerExcerpt=$('#aiReportIncludeExcerpt').checked ? reportAnswerExcerpt : undefined;
+    button.disabled=true; status.textContent='신고 내용을 안전하게 보내고 있어요…';
+    try {
+      const res=await fetch('/api/ai/report',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reason, ...(answerExcerpt?{answerExcerpt}:{})})});
+      const data=await res.json().catch(()=>({}));
+      if (!res.ok || !data.ok) throw Error(data.error||'신고를 보내지 못했어요.');
+      status.textContent='✅ 신고가 접수됐어요. 알려줘서 고마워요.';
+      reportAnswerExcerpt=''; button.disabled=true;
+    } catch(e) { status.textContent='❌ '+e.message;button.disabled=false; }
   }
   async function unlockParentMode() {
     const pin = $('#parentPinInput').value.trim();
@@ -1064,16 +1154,12 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.verified !== true) throw Error(data.error || '비밀번호 확인에 실패했어요.');
       parentVerifiedPin = pin;
-      $('#parentPinInput').value = '';
-      $('#parentGate').hidden = true;
-      $('#parentDashboard').hidden = false;
       status.textContent = '';
-      renderReport();
-      updateParentAnswerAccess();
-      refreshAnswerPinStatus();
+      setupParentDashboard();
     } catch (error) {
       status.textContent = `❌ ${error.message}`;
       parentVerifiedPin = null;
+      if (/먼저 설정/.test(error.message)) refreshParentGate();
     } finally { button.disabled = false; }
   }
   function updateParentAnswerAccess() {
@@ -1161,9 +1247,9 @@
       const response=await fetch('/api/answer/config',{cache:'no-store'});
       const data=await response.json();
       if (!response.ok) throw Error(data.error || '설정을 불러오지 못했어요.');
-      $('#answerPinScope').textContent=data.pinChanged
-        ? '✅ 이 기기에서 변경한 비밀번호가 적용되어 있어요. 브라우저 데이터 삭제 시 초기 비밀번호로 돌아갈 수 있어요.'
-        : '⚠️ 초기 비밀번호는 0000이에요. 다른 사람이 추측하기 쉬우므로 꼭 변경해 주세요. 비밀번호는 이 기기에만 적용돼요.';
+      $('#answerPinScope').textContent=data.pinConfigured
+        ? '✅ 이 브라우저에 설정한 비밀번호가 적용돼요. 사이트 데이터를 삭제하면 새로 설정해야 해요.'
+        : '⚠️ 이 브라우저에 비밀번호가 아직 없어요. 최초 설정이 필요해요.';
     } catch (_) { $('#answerPinScope').textContent='정답 비밀번호 상태를 불러오지 못했어요.'; }
   }
   async function changeAnswerPin() {
@@ -1171,7 +1257,10 @@
     const oldPin=$('#oldAnswerPin').value.trim();
     const newPin=$('#newAnswerPin').value.trim();
     const checkPin=$('#newAnswerPinConfirm').value.trim();
-    if (!/^\d{4,12}$/.test(newPin) || newPin==='0000') { status.textContent='새 비밀번호는 0000이 아닌 숫자 4~12자리로 입력해 주세요.'; return; }
+    if (!/^\d{6,12}$/.test(newPin) || /^(\d)\1+$/.test(newPin) ||
+        ['123456','12345678','123456789','1234567890','654321','87654321'].includes(newPin)) {
+      status.textContent='반복·연속 숫자가 아닌 숫자 6~12자리로 입력해 주세요.'; return;
+    }
     if (newPin!==checkPin) { status.textContent='새 비밀번호 두 개가 서로 달라요.'; return; }
     button.disabled=true; status.textContent='변경하고 있어요…';
     try {
@@ -1279,7 +1368,10 @@
   $('#moreHintBtn').addEventListener('click', () => sendMessage('힌트를 하나 더 주세요.', { fromHintButton: true }));
   $('#parentRevealBtn').addEventListener('click',revealAnswer);
   $('#unlockParentBtn').addEventListener('click',unlockParentMode);
+  $('#createParentPinBtn').addEventListener('click',createParentPin);
+  $('#sendAiReportBtn').addEventListener('click',submitAiReportForm);
   $('#parentPinInput').addEventListener('keydown',e=>{ if (e.key==='Enter') {e.preventDefault();unlockParentMode();} });
+  $('#setupParentPinConfirm').addEventListener('keydown',e=>{ if (e.key==='Enter') {e.preventDefault();createParentPin();} });
   $('#changeAnswerPinBtn').addEventListener('click',changeAnswerPin);
   $('#recheckProblemBtn').addEventListener('click', () => sendMessage('문제를 다시 읽어 주세요.', { fromRecheck: true }));
   $('#understoodBtn').addEventListener('click', markUnderstood);

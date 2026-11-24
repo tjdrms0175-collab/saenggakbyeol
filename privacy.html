@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="theme-color" content="#8272e5"/><title>생각별 | 개인정보 처리 안내</title>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f8f6ff;color:#39364e;font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;line-height:1.75}
+main{max-width:790px;margin:24px auto;background:#fff;padding:clamp(20px,5vw,44px);border-radius:22px;box-shadow:0 12px 35px #3a326315}
+h1{margin:0 0 8px;color:#6755bc;font-size:27px}h2{margin:26px 0 8px;font-size:18px;color:#5a4d8c}
+p,li{font-size:14px}ul{padding-left:24px}a{color:#6755bc}aside{background:#fff4e9;border:1px solid #f1d3a7;padding:14px;border-radius:12px;font-weight:700;font-size:13px}
+small{color:#69647c}footer{margin-top:32px}
+</style></head><body><main>
+<h1>생각별 개인정보 처리 안내</h1>
+<p>생각별 선생님은 초등학생이 스스로 문제를 풀도록 돕는 AI 학습 서비스입니다. 이 안내는 현재 웹앱 v39의 기술적 처리 방식을 설명하는 개발 중 초안입니다.</p>
+<aside>정식 배포 전 운영자의 실제 이름(또는 상호), 개인정보 문의 이메일, 보관 및 삭제 정책, 법정대리인 동의 절차 등을 확정해야 합니다. 이 문서는 아직 정식 개인정보 처리방침을 대신하지 않습니다.</aside>
+<h2>1. 어떤 정보를 다루나요?</h2>
+<ul>
+<li>아이 또는 보호자가 입력한 학습 질문과 문제 사진은 AI 힌트를 만들기 위해 생각별 서버를 거쳐 설정된 외부 AI 서비스(Google Gemini 등)에 전달될 수 있습니다.</li>
+<li>마이크로 말한 음성은 브라우저의 음성 인식 서비스에서 온라인 처리될 수 있으며, 인식한 문장을 확인한 뒤에만 질문으로 전송합니다.</li>
+<li>학년 설정, 학습 리포트(문제 문장 포함), 힌트 횟수 등은 사용하는 브라우저의 로컬 저장소에 저장되며, 다른 기기와 자동 동기화되지 않습니다.</li>
+<li>부정 사용과 유료 API 비용 제한을 위해 네트워크 접속 정보에서 생성한 가명화된 해시 식별자와 일별 횟수를 서버의 Supabase 데이터베이스에 저장합니다. 서비스 운영 과정에서 접속 IP 등 기술적 정보가 처리될 수 있습니다.</li>
+<li>AI 답변 신고 시에는 신고 사유만 저장되며, 신고자가 별도로 동의한 경우에 한해 해당 AI 답변의 일부(최대 600자)를 추가로 저장합니다. 신고에 학생 질문이나 사진을 자동 첨부하지 않습니다.</li>
+</ul>
+<h2>2. 어떤 목적으로 사용하나요?</h2>
+<p>학습 힌트 생성·검증, 사진 문제 읽기, 요청 횟수 제한, 부적절한 AI 답변 신고 확인, 보안 및 서비스 유지 목적입니다. 현재 앱에는 광고 SDK나 인앱 결제가 포함되지 않습니다.</p>
+<h2>3. 보호자 설정과 기기 내 기록</h2>
+<p>학부모 비밀번호는 브라우저 쿠키에 암호화된 검증 정보로 저장됩니다. 아이의 학습 기록은 학부모 모드의 <strong>기록 지우기</strong> 버튼으로 브라우저에서 삭제할 수 있습니다. 비밀번호 쿠키를 포함한 사이트 데이터 전체는 브라우저 설정에서 삭제할 수 있으며, 이 경우 최초 보호자 비밀번호를 다시 설정해야 합니다.</p>
+<h2>4. 외부 서비스와 보관</h2>
+<p>Gemini 등 AI 제공사와 브라우저 음성 인식 서비스는 각자의 처리 정책에 따라 데이터를 다룰 수 있습니다. 생각별 서버는 일반 질문·사진의 내용을 별도 학습 기록 테이블에 저장하지 않지만, 외부 서비스의 처리·보관까지 자동 삭제하는 것은 아닙니다. Supabase의 일별 이용량과 신고 기록은 운영자가 별도로 관리하며, 현재 자동 보관기간 만료 삭제는 구현되어 있지 않습니다.</p>
+<h2>5. 개인정보를 적지 않도록 도와주세요</h2>
+<p>질문이나 사진에 이름, 학교명, 연락처, 주소, 얼굴 등 개인정보가 들어가지 않도록 해 주세요. 신고 시에도 개인정보가 포함된 AI 답변은 문구 첨부 동의를 선택하지 않는 것을 권장합니다.</p>
+<h2>6. 문의 및 삭제 요청</h2>
+<p><strong>[정식 출시 전 운영자 문의 이메일 입력 필요]</strong> — 운영자가 신고 및 삭제 요청을 받을 연락처를 공개하고 실제 응대 절차를 마련해야 합니다. 계정이 없는 현재 구조에서는 특정 이용량 기록을 사용자와 정확히 연결해 삭제하는 기능이 아직 없습니다.</p>
+<footer><p><small>기술적 구현 안내 · v39 · 마지막 점검: 2026년 11월 24일</small></p><p><a href="/">생각별 선생님으로 돌아가기</a></p></footer>
+</main></body></html>

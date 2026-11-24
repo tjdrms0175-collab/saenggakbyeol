@@ -121,11 +121,11 @@
             </div>
           </form>
           <div class="voice-feedback" id="voiceFeedback" role="status" aria-live="polite">🎤 마이크를 누르고 질문하세요. 인식된 글자를 확인한 뒤 <strong>보내기</strong>를 눌러요.</div>
-          <p class="privacy-footnote" id="privacyFootnote">🔒 학습 기록은 이 브라우저 탭에만 임시 저장돼요. <span id="photoNote">사진은 선택한 AI 서비스로 전송될 수 있어요.</span><br />🎙️ 음성 인식은 브라우저의 온라인 서비스에서 처리될 수 있어요. 마이크를 누를 때만 인식을 시작해요.</p>
+          <p class="privacy-footnote" id="privacyFootnote">🔒 오늘의 학습 기록은 이 기기 브라우저에 저장되며 학부모 모드에서 삭제할 수 있어요. <span id="photoNote">사진은 선택한 AI 서비스로 전송될 수 있어요.</span> 🎙️ 음성 인식은 브라우저의 온라인 서비스에서 처리될 수 있어요.<br /><a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
         </div>
       </section>
     </main>
-    <footer class="page-footer">틀려도 괜찮아요. 중요한 건 <strong>스스로 생각하는 힘!</strong> 💜</footer>
+    <footer class="page-footer">틀려도 괜찮아요. 중요한 건 <strong>스스로 생각하는 힘!</strong> 💜 <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내</a></footer>
   </div>
 
   <div class="modal-backdrop" id="settingsModal" hidden>
@@ -170,7 +170,19 @@
   <div class="modal-backdrop" id="parentModal" hidden>
     <section class="modal parent-modal" role="dialog" aria-modal="true" aria-labelledby="parentTitle">
       <div class="modal-header"><div><span class="modal-eyebrow">우리 아이의 성장 기록</span><h2 id="parentTitle">📚 학부모 모드</h2></div><button type="button" class="close-modal" data-close="parentModal" aria-label="닫기">×</button></div>
-      <div id="parentGate" class="parent-gate">
+      <div id="parentSetup" class="parent-gate" hidden>
+        <h3>🔐 보호자 최초 설정</h3>
+        <p>이 브라우저에는 아직 학부모 비밀번호가 없어요. 보호자께서 숫자 6~12자리 비밀번호를 설정해 주세요. 기본 비밀번호 0000은 더 이상 사용할 수 없어요.</p>
+        <label class="field-label" for="setupParentPin">새 학부모 비밀번호</label>
+        <input id="setupParentPin" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="숫자 6~12자리" />
+        <label class="field-label" for="setupParentPinConfirm">비밀번호 확인</label>
+        <input id="setupParentPinConfirm" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="같은 숫자 다시 입력" />
+        <label class="guardian-confirm"><input id="guardianConfirm" type="checkbox" /> 이 기기의 보호자이며, 비밀번호 설정과 아동의 AI 학습 서비스 이용을 확인했습니다.</label>
+        <p class="setting-help">이 설정은 보호자 신원을 별도로 증명하지는 않아요. 공유 기기에서는 보호자께서 직접 설정해 주세요. <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
+        <p id="parentSetupStatus" class="connection-test-status" role="status" aria-live="polite"></p>
+        <button id="createParentPinBtn" type="button" class="primary-wide">학부모 비밀번호 설정</button>
+      </div>
+      <div id="parentGate" class="parent-gate" hidden>
         <h3>🔐 보호자 확인</h3>
         <p>학습 리포트와 정답 열람은 보호자만 확인해 주세요. 보호자 비밀번호를 입력해 주세요.</p>
         <label class="field-label" for="parentPinInput">학부모 비밀번호</label>
@@ -187,7 +199,6 @@
           <p id="revealAnswerStatus" class="connection-test-status" role="status" aria-live="polite"></p>
           <div id="parentAnswerOutput" class="parent-answer-output" role="status" aria-live="polite" hidden></div>
         </section>
-      <p class="modal-description" id="reportDate"></p>
       <div class="report-summary"><div class="report-stat"><span>질문한 문제</span><strong id="statProblems">0<small>개</small></strong></div><div class="report-stat"><span>사용한 힌트</span><strong id="statHints">0<small>회</small></strong></div><div class="report-stat"><span>정답 확인</span><strong id="statSolved">0<small>개</small></strong></div><div class="report-stat"><span>스스로 이해 표시</span><strong id="statUnderstood">0<small>개</small></strong></div></div>
       <section class="learning-insights" aria-labelledby="insightsTitle"><h3 id="insightsTitle">🌱 오늘의 학습 관찰</h3><div class="insight-grid"><div class="insight-card"><strong>✨ 스스로 잘 해결한 부분</strong><p id="strengthInsight">학습 기록을 살펴보고 있어요.</p></div><div class="insight-card needs-practice"><strong>🌷 조금 더 연습할 부분</strong><p id="growthInsight">학습 기록을 살펴보고 있어요.</p></div></div><p class="insight-caution" id="insightCaution">이 기록은 학습 중의 시도에 대한 참고 자료이며, 지능이나 능력을 판단하지 않아요.</p></section><h3 class="report-list-title">오늘 어떤 걸 공부했나요?</h3>
       <div id="reportList" class="report-list"></div>
@@ -195,18 +206,37 @@
 
       <section class="parent-pin-section" aria-label="정답 보기 비밀번호 변경">
         <h3>🔐 정답 보기 비밀번호</h3>
-        <p class="setting-help">학부모 모드에 들어올 때 입력한 비밀번호를 변경할 수 있어요. 초기값은 <strong>0000</strong>이며, 안전을 위해 변경해 주세요.</p>
+        <p class="setting-help">현재 학부모 비밀번호를 변경할 수 있어요. 쉬운 반복·연속 숫자를 피해 숫자 6~12자리로 설정해 주세요.</p>
         <label for="oldAnswerPin" class="field-label">현재 비밀번호</label>
-        <input id="oldAnswerPin" class="key-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="현재 비밀번호 (처음에는 0000)" />
-        <label for="newAnswerPin" class="field-label">새 비밀번호 (숫자 4~12자리)</label>
+        <input id="oldAnswerPin" class="key-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="현재 비밀번호" />
+        <label for="newAnswerPin" class="field-label">새 비밀번호 (숫자 6~12자리)</label>
         <input id="newAnswerPin" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12" placeholder="새 비밀번호" />
         <label for="newAnswerPinConfirm" class="field-label">새 비밀번호 다시 입력</label>
         <input id="newAnswerPinConfirm" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" maxlength="12" placeholder="새 비밀번호 확인" />
         <button type="button" id="changeAnswerPinBtn" class="teacher-preview-button">비밀번호 변경하기</button>
-        <p class="setting-help" id="answerPinScope">비밀번호 변경은 이 기기·브라우저에 저장돼요. 다른 기기에는 따로 설정해야 하고, 브라우저 데이터를 삭제하면 초기값으로 돌아갈 수 있어요.</p>
+        <p class="setting-help" id="answerPinScope">비밀번호는 이 브라우저에 저장돼요. 다른 브라우저에서 별도로 설정해야 하며 사이트 데이터를 삭제하면 다시 최초 설정이 필요해요.</p>
         <p class="connection-test-status" id="changeAnswerPinStatus" aria-live="polite" role="status"></p>
       </section>
       </div>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="aiReportModal" hidden>
+    <section class="modal ai-report-modal" role="dialog" aria-modal="true" aria-labelledby="aiReportTitle">
+      <div class="modal-header"><div><span class="modal-eyebrow">안전한 공부 공간 만들기</span><h2 id="aiReportTitle">🚩 AI 답변 신고</h2></div><button type="button" class="close-modal" data-close="aiReportModal" aria-label="닫기">×</button></div>
+      <p class="modal-description">틀리거나 불편한 답변을 발견했나요? 신고하면 운영자가 살펴볼 수 있어요. 문제 내용과 사진은 보내지 않아요.</p>
+      <label class="field-label" for="aiReportReason">신고 이유</label>
+      <select id="aiReportReason" class="provider-select">
+        <option value="">신고 이유를 선택해 주세요</option>
+        <option value="unsafe">위험하거나 부적절한 내용</option>
+        <option value="offensive">상처를 주거나 불쾌한 말</option>
+        <option value="incorrect">잘못된 설명이나 힌트</option>
+        <option value="privacy">개인정보가 포함된 내용</option>
+        <option value="other">그 밖의 문제</option>
+      </select>
+      <label class="guardian-confirm"><input type="checkbox" id="aiReportIncludeExcerpt" /> 신고할 AI 답변 일부(최대 600자)를 함께 보내는 데 동의합니다.</label>
+      <p class="setting-help">선택하지 않으면 신고 사유만 저장됩니다. AI가 출력한 문장에 이름이나 개인정보가 있으면 체크하지 마세요.</p>
+      <p id="aiReportStatus" class="connection-test-status" role="status" aria-live="polite"></p>
+      <button id="sendAiReportBtn" type="button" class="primary-wide">운영자에게 신고하기</button>
     </section>
   </div>
   <div class="modal-backdrop" id="installModal" hidden>

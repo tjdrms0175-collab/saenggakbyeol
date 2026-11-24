@@ -264,3 +264,13 @@
 .photo-read-confirm{background:#7b6ade;color:white}
 .photo-read-actions button:disabled{opacity:.45}
 @media(max-width:420px){.photo-read-actions button{font-size:12px;padding:12px 7px}.photo-read-modal{padding:20px}.photo-read-modal .modal-header h2{font-size:20px}}
+
+/* v39: first-use guardian setup and low-data AI answer reporting */
+.guardian-confirm{display:flex;gap:10px;align-items:flex-start;margin:14px 0;font-size:13px;color:#605a78;line-height:1.7}
+.guardian-confirm input{flex:0 0 19px;width:19px;height:19px;margin-top:2px;accent-color:#8071df}
+.parent-gate .field-label{margin:12px 0 6px}
+.ai-report-button{display:inline-block;margin-top:7px;padding:5px 9px;border:1px solid #eadfeb;background:#fffafa;border-radius:10px;color:#876783;font-size:11px;font-weight:750}
+.ai-report-button:hover{background:#fff1f5}
+.ai-report-modal .provider-select{margin-bottom:8px}
+.privacy-footnote a,.page-footer a{color:#6b5fba;text-decoration:underline;text-underline-offset:2px}
+.page-footer a{margin-left:10px}
