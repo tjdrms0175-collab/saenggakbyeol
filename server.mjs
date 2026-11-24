@@ -4,11 +4,13 @@
  */
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runTutorFlow, runAnswerRevealFlow, TutorEngineError, HintQualityError, TUTOR_ENGINE_VERSION } from './tutor-engine.mjs';
 import { parsePhotoReading, PhotoReadError, PHOTO_READ_PROMPT } from './photo-reader.mjs';
+import { makeUsageStore, UsageStorageError } from './supabase-usage.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -34,6 +36,11 @@ function sameOrigin(req) {
 // The app is publicly accessible. Apply simple server-side AI request caps
 // as a guardrail against accidentally consuming the server owner's quota.
 // This is not account-based billing or abuse-proof authentication.
+const usageStore = makeUsageStore();
+const usageContext = new AsyncLocalStorage();
+function withUsageContext(req, task) {
+  return usageStore ? usageContext.run(usageStore.clientId(req), task) : task();
+}
 const aiUsageByClient = new Map();
 let aiGlobalDay = '';
 let aiGlobalCount = 0;
@@ -43,7 +50,10 @@ function limitInt(value, fallback) {
 }
 const AI_CLIENT_HOURLY_LIMIT = limitInt(process.env.AI_CLIENT_HOURLY_LIMIT, 40);
 const AI_GLOBAL_DAILY_LIMIT = limitInt(process.env.AI_GLOBAL_DAILY_LIMIT, 120);
-function aiQuotaExceeded(req) {
+const AI_CLIENT_DAILY_LIMIT = limitInt(process.env.AI_CLIENT_DAILY_LIMIT, 40);
+const AI_CLIENT_PHOTO_DAILY_LIMIT = limitInt(process.env.AI_CLIENT_PHOTO_DAILY_LIMIT, 5);
+const GEMINI_CLIENT_DAILY_CALL_LIMIT = limitInt(process.env.GEMINI_CLIENT_DAILY_CALL_LIMIT, 120);
+function aiQuotaExceededLocal(req) {
   const now = Date.now();
   const day = new Date(now).toISOString().slice(0, 10);
   if (aiGlobalDay !== day) { aiGlobalDay = day; aiGlobalCount = 0; }
@@ -67,7 +77,46 @@ function aiQuotaExceeded(req) {
   return null;
 }
 
-const HINT_ENGINE_VERSION = 'v37-usage-guard-' + TUTOR_ENGINE_VERSION;
+// Keep v37's hourly anonymous IP limit when durable storage is enabled.
+function aiQuotaExceededHourly(req) {
+  const now=Date.now();
+  const chain=process.env.TRUST_PROXY==='1' ? String(req.headers['x-forwarded-for']||'') : '';
+  const address=(chain.split(',')[0]?.trim()||req.socket.remoteAddress||'unknown').slice(0,100);
+  const prev=aiUsageByClient.get(address);
+  const row=(!prev||now-prev.since>=3600000)?{since:now,count:0}:prev;
+  if (row.count>=AI_CLIENT_HOURLY_LIMIT) return {error:'시간당 AI 사용량 제한에 도달했어요. 잠시 후 이용해 주세요.',code:'PUBLIC_USAGE_LIMIT',retryable:false};
+  row.count++;
+  aiUsageByClient.set(address,row);
+  return null;
+}
+
+// v38: durable per-client daily and global daily request limits. Each atomic
+// RPC either reserves one unit or rejects it; never bill Gemini if DB is down.
+// Hourly throttling remains process-local and is not a user authentication.
+async function aiQuotaExceeded(req, kind='hint') {
+  if (!usageStore) return aiQuotaExceededLocal(req);
+  const hourly=aiQuotaExceededHourly(req);
+  if (hourly) return hourly;
+  try {
+    const clientId=usageStore.clientId(req);
+    const allowedClient=await usageStore.reserve(clientId,'question',AI_CLIENT_DAILY_LIMIT);
+    if (!allowedClient) return {error:'오늘의 AI 사용량에 도달했어요. 내일 다시 이용해 주세요.',code:'PUBLIC_USAGE_LIMIT',retryable:false};
+    if (kind === 'photo') {
+      const allowedPhoto=await usageStore.reserve(clientId,'photo',AI_CLIENT_PHOTO_DAILY_LIMIT);
+      if (!allowedPhoto) return {error:'오늘의 사진 인식 사용량에 도달했어요. 내일 다시 이용해 주세요.',code:'PUBLIC_USAGE_LIMIT',retryable:false};
+    }
+    const allowedGlobal=await usageStore.reserve('global_public','question',AI_GLOBAL_DAILY_LIMIT);
+    if (!allowedGlobal) return {error:'오늘의 전체 AI 사용량에 도달했어요. 내일 다시 이용해 주세요.',code:'PUBLIC_USAGE_LIMIT',retryable:false};
+    // Auxiliary per-client totals; these are best-effort bookkeeping, not billing limits.
+    if (kind === 'hint') await usageStore.reserve(clientId,'hint',100000);
+    return null;
+  } catch (err) {
+    if (err instanceof UsageStorageError) return {error:err.message,code:err.code,retryable:false,status:503};
+    throw err;
+  }
+}
+
+const HINT_ENGINE_VERSION = 'v38-supabase-usage-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -251,7 +300,7 @@ let geminiCallDay = '';
 let geminiDayCalls = 0;
 let geminiCallHour = '';
 let geminiHourCalls = 0;
-function reserveGeminiCall(budget) {
+async function reserveGeminiCall(budget) {
   const now = new Date().toISOString();
   const day = now.slice(0,10);
   const hour = now.slice(0,13);
@@ -265,6 +314,18 @@ function reserveGeminiCall(budget) {
     error.code = 'APP_BUDGET_LIMIT';
     error.retryable = false;
     throw error;
+  }
+  if (usageStore) {
+    let allowed;
+    const currentClient=usageContext.getStore();
+    if (currentClient) {
+      try { allowed=await usageStore.reserve(currentClient,'api',GEMINI_CLIENT_DAILY_CALL_LIMIT); }
+      catch (e) { const err=new TutorEngineError('사용량 저장 서버 연결이 불안정해 AI 요청을 중단했어요.',503); err.code='USAGE_STORAGE_UNAVAILABLE'; err.retryable=false; throw err; }
+      if (!allowed) { const err=new TutorEngineError('오늘의 개인 Gemini 호출 한도에 도달했어요.',429); err.code='APP_BUDGET_LIMIT'; err.retryable=false; throw err; }
+    }
+    try { allowed=await usageStore.reserve('global_gemini','api',GEMINI_DAILY_CALL_LIMIT); }
+    catch (e) { const err = new TutorEngineError('사용량 저장 서버 연결이 불안정해 AI 요청을 중단했어요.',503); err.code='USAGE_STORAGE_UNAVAILABLE'; err.retryable=false; throw err; }
+    if (!allowed) { const err=new TutorEngineError('오늘의 Gemini 호출 보호 한도에 도달했어요.',429); err.code='APP_BUDGET_LIMIT'; err.retryable=false; throw err; }
   }
   if (budget) budget.calls = operationCalls + 1;
   geminiDayCalls++;
@@ -419,7 +480,7 @@ async function requestTutorModel({ provider, model, key, baseUrl, stage, instruc
   }
   // Reserve before the network request: 429 failures, transport errors and
   // backup-model attempts still consume an upstream request slot.
-  if (details.kind === 'gemini') reserveGeminiCall(costBudget);
+  if (details.kind === 'gemini') await reserveGeminiCall(costBudget);
   let response;
   try {
     response = await fetch(endpoint, {
@@ -613,8 +674,8 @@ async function tutor(req, res) {
   const requestId = typeof body.retryRequestId === 'string' ? body.retryRequestId : '';
   if (requestId && !/^[A-Za-z0-9_-]{16,90}$/.test(requestId)) return json(res,400,{error:'요청 식별자가 올바르지 않아요.'});
   if (!requestId) {
-    const quota = aiQuotaExceeded(req);
-    if (quota) return json(res,429,quota);
+    const quota = await aiQuotaExceeded(req);
+    if (quota) return json(res,quota.status||429,quota);
     const result = await computeTutorResponse(body);
     return json(res,result.status,result.data);
   }
@@ -632,8 +693,8 @@ async function tutor(req, res) {
     if (completedTutorCalls.size > 1000) completedTutorCalls.clear();
   }
   if (!existing) {
-    const quota = aiQuotaExceeded(req);
-    if (quota) return json(res,429,quota);
+    const quota = await aiQuotaExceeded(req);
+    if (quota) return json(res,quota.status||429,quota);
   }
   const entry = existing || {identity,expiresAt:Date.now()+REQUEST_TTL,
     promise:computeTutorResponse(body)};
@@ -653,8 +714,8 @@ async function readProblemPhoto(req,res) {
   const img=body?.imageDataUrl;
   if (typeof img!=='string' || img.length>4*1024*1024 || !imageParts(img))
     return json(res,400,{code:'PHOTO_INVALID',error:'사진을 JPG·PNG·WEBP 형식으로 다시 첨부해 주세요.'});
-  const quota=aiQuotaExceeded(req);
-  if (quota) return json(res,429,quota);
+  const quota=await aiQuotaExceeded(req,'photo');
+  if (quota) return json(res,quota.status||429,quota);
   const key=process.env.GEMINI_API_KEY?.trim();
   if (!key) return json(res,503,{code:'PHOTO_AI_MISSING',error:'사진 인식용 Gemini API 키가 서버에 등록되지 않았어요. 관리자에게 문의해 주세요.'});
   try {
@@ -692,8 +753,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/login' && req.method === 'POST') {
     return json(res, 200, { ok:true, loginRemoved:true });
   }
-  if (url.pathname === '/api/photo/read' && req.method === 'POST') return readProblemPhoto(req,res);
-  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
+  if (url.pathname === '/api/photo/read' && req.method === 'POST') return withUsageContext(req,()=>readProblemPhoto(req,res));
+  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, persistentUsage:!!usageStore, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
   if (url.pathname === '/api/provider-config' && req.method === 'GET') {
     const providers = Object.fromEntries(Object.entries(API_PROVIDERS).map(([id, p]) => [id, {
       label: p.name,
@@ -750,8 +811,8 @@ const server = http.createServer(async (req, res) => {
       if (!pinMatches(req,body.pin)) { markWrongPin(req); return json(res,403,{error:'정답 보기 비밀번호가 일치하지 않아요.'}); }
     } catch (e) { return json(res,e.status||400,{error:e.message}); }
     clearPinFailures(req);
-    const quota = aiQuotaExceeded(req);
-    if (quota) return json(res, 429, quota);
+    const quota = await aiQuotaExceeded(req,'answer');
+    if (quota) return json(res,quota.status||429,quota);
     const provider=body.provider || 'gemini', details=API_PROVIDERS[provider];
     if (!details) return json(res,400,{error:'AI 제공업체를 확인해 주세요.'});
     const model=typeof body.model==='string' && body.model ? body.model : details.model;
@@ -762,8 +823,8 @@ const server = http.createServer(async (req, res) => {
     const photo=body.imageDataUrl;
     if (photo && (typeof photo !== 'string' || photo.length>4*1024*1024 || !imageParts(photo))) return json(res,400,{error:'문제 사진을 다시 확인해 주세요.'});
     try {
-      const result=await runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo && !body.photoTextConfirmed},
-        createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:photo}));
+      const result=await withUsageContext(req,()=>runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo && !body.photoTextConfirmed},
+        createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:photo})));
       return json(res,200,{...result,requiredHints:REQUIRED_HINTS, geminiRoute:provider==='gemini'?geminiRouteInfo():undefined});
     } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
   }
@@ -773,7 +834,7 @@ const server = http.createServer(async (req, res) => {
     if (!sameOrigin(req)) {
       return json(res, 403, { error: '허용되지 않은 출처예요.' });
     }
-    return tutor(req, res);
+    return withUsageContext(req,()=>tutor(req,res));
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: '지원하지 않는 요청이에요.' });
   const entry = STATIC.get(url.pathname);
