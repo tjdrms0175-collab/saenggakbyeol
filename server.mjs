@@ -143,7 +143,7 @@ async function aiQuotaExceeded(req, kind='hint') {
   }
 }
 
-const HINT_ENGINE_VERSION = 'v42-guardian-media-privacy-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v43-no-enrollment-code-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -180,11 +180,8 @@ function getTrackedProblem(body) {
 // on each guardian's device. Render free hosts have no persistent disk.
 // v39: New browsers have NO default parent PIN. A guardian must configure one.
 const ANSWER_COOKIE = 'sb_answer_pin';
-// Enrollment requires an operator-supplied, high-entropy pilot code delivered
-// out of band. A cookie reset cannot turn a child's self-assertion into permission.
-// This is NOT verified adult identity and is not sufficient for public child launch.
-const GUARDIAN_ENROLLMENT_CODE = String(process.env.GUARDIAN_ENROLLMENT_CODE || '').trim();
-const guardianEnrollmentEnabled = GUARDIAN_ENROLLMENT_CODE.length >= 16;
+// v43: User-requested enrollment-code removal. PIN is browser-local only.
+// Removing the cookie permits re-enrollment; this is NOT verified adult identity.
 const answerCookieKey = crypto.createHash('sha256').update('saenggakbyeol-answer-pin-v14|' +
   (process.env.ANSWER_PIN_SECRET || APP_ACCESS_PIN || process.env.GEMINI_API_KEY || SESSION_TOKEN)).digest();
 function cookieValue(req, name) {
@@ -880,11 +877,6 @@ const server = http.createServer(async (req, res) => {
       return json(res,400,{error:'보호자 확인 후, 서로 같은 안전한 숫자 6~12자리를 입력해 주세요.'});
     try {
       if (readAnswerPin(req)) return json(res,409,{error:'이미 비밀번호가 설정돼 있어요. 학부모 모드에서 변경해 주세요.'});
-      if (!guardianEnrollmentEnabled) return json(res,503,{error:'학부모 최초 등록이 아직 준비되지 않았어요. 관리자에게 문의해 주세요.'});
-      if (typeof body.enrollmentCode !== 'string' || !constantEquals(body.enrollmentCode, GUARDIAN_ENROLLMENT_CODE)) {
-        markWrongPin(req);
-        return json(res,403,{error:'보호자 등록 코드가 일치하지 않아요. 관리자에게 받은 코드를 확인해 주세요.'});
-      }
       clearPinFailures(req);
       putAnswerCookie(req,res,body.newPin);
       return json(res,201,{ok:true,pinConfigured:true,pinScope:'this-browser'});

@@ -1016,7 +1016,6 @@
     $('#parentSetupStatus').textContent='';
     $('#setupParentPin').value='';
     $('#setupParentPinConfirm').value='';
-    $('#guardianEnrollmentCode').value='';
     $('#guardianConfirm').checked=false;
     $('#parentGate').hidden = true;
     $('#parentDashboard').hidden = true;
@@ -1075,7 +1074,7 @@
     button.disabled=true; status.textContent='보호자 비밀번호를 설정하는 중이에요…';
     try {
       const response=await fetch('/api/parent/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({newPin:pin,confirmPin,guardianConfirmed:true,enrollmentCode:$('#guardianEnrollmentCode').value.trim()})});
+        body:JSON.stringify({newPin:pin,confirmPin,guardianConfirmed:true})});
       const data=await response.json().catch(()=>({}));
       if (!response.ok || !data.ok) throw Error(data.error||'설정에 실패했어요.');
       parentVerifiedPin=pin;
@@ -1088,7 +1087,6 @@
     $('#parentPinInput').value='';
     $('#setupParentPin').value='';
     $('#setupParentPinConfirm').value='';
-    $('#guardianEnrollmentCode').value='';
     $('#parentSetup').hidden=true;
     $('#parentGate').hidden=true;
     $('#parentDashboard').hidden=false;

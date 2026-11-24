@@ -1,6 +1,6 @@
 {
   "name": "saenggakbyeol-home-tutor",
-  "version": "1.42.0",
+  "version": "1.43.0",
   "private": true,
   "type": "module",
   "description": "Grade-aware Socratic tutor across Korean, math, social studies, science, and English; AI-first answer safety",

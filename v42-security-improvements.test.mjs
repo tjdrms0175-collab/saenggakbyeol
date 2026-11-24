@@ -22,28 +22,16 @@ async function post(base,url,body,cookie=''){
   return {status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')};
 }
 const pinData={newPin:'826493',confirmPin:'826493',guardianConfirmed:true};
-test('no guardian enrollment code, no new parent PIN even after cookie deletion',async t=>{
-  const base=await boot(t);
-  const absent=await post(base,'/api/parent/setup',pinData);
-  assert.equal(absent.status,403);
-  const wrong=await post(base,'/api/parent/setup',{...pinData,enrollmentCode:'invented-by-a-child'});
-  assert.equal(wrong.status,403);
-  const valid=await post(base,'/api/parent/setup',{...pinData,enrollmentCode:VALID_CODE});
-  assert.equal(valid.status,201);
+test('v43: first-use PIN setup works without enrollment code',async t=>{
+  const base=await boot(t,{code:''});
+  const valid=await post(base,'/api/parent/setup',pinData);
+  assert.equal(valid.status,201,JSON.stringify(valid.body));
   assert.match(valid.cookie,/sb_answer_pin=/);
   const cookie=valid.cookie.split(';')[0];
-  const old=await post(base,'/api/parent/verify',{pin:'826493'},cookie);
-  assert.equal(old.status,200);
-  // A new browser has no cookie; it cannot simply create a new PIN.
-  const wiped=await post(base,'/api/parent/setup',pinData);
-  assert.equal(wiped.status,403);
-  const config=await (await fetch(base+'/api/answer/config')).json();
-  assert.equal(config.pinConfigured,false);
-});
-test('setup stays disabled without operator enrollment secret',async t=>{
-  const base=await boot(t,{code:''});
-  const response=await post(base,'/api/parent/setup',{...pinData,enrollmentCode:'made-up-code'});
-  assert.equal(response.status,503);
+  assert.equal((await post(base,'/api/parent/verify',{pin:'826493'},cookie)).status,200);
+  assert.equal((await post(base,'/api/parent/setup',pinData,cookie)).status,409);
+  // In a fresh browser without the cookie, setting a new PIN is possible.
+  assert.equal((await post(base,'/api/parent/setup',{newPin:'592637',confirmPin:'592637',guardianConfirmed:true})).status,201);
 });
 test('production responses and public assets reveal only provider, no model IDs or private env names',async t=>{
   const base=await boot(t);

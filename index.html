@@ -160,15 +160,12 @@
       <div id="parentSetup" class="parent-gate" hidden>
         <h3>🔐 보호자 최초 설정</h3>
         <p>이 브라우저에는 아직 학부모 비밀번호가 없어요. 보호자께서 숫자 6~12자리 비밀번호를 설정해 주세요. 기본 비밀번호 0000은 더 이상 사용할 수 없어요.</p>
-        <label class="field-label" for="guardianEnrollmentCode">보호자 등록 코드</label>
-        <input id="guardianEnrollmentCode" class="key-input" type="password" autocomplete="off" placeholder="운영자가 별도로 안내한 등록 코드" />
-        <p class="setting-help">등록 코드는 보호자에게 별도 전달됩니다. 코드가 없다면 최초 등록을 할 수 없어요.</p>
         <label class="field-label" for="setupParentPin">새 학부모 비밀번호</label>
         <input id="setupParentPin" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="숫자 6~12자리" />
         <label class="field-label" for="setupParentPinConfirm">비밀번호 확인</label>
         <input id="setupParentPinConfirm" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="같은 숫자 다시 입력" />
         <label class="guardian-confirm"><input id="guardianConfirm" type="checkbox" /> 이 기기의 보호자이며, 비밀번호 설정과 아동의 AI 학습 서비스 이용을 확인했습니다.</label>
-        <p class="setting-help">등록 코드로 허용된 보호자만 최초 설정하도록 제한하지만, 법적 보호자 신원 인증을 대신하지는 않아요. 공유 기기에서는 보호자께서 직접 설정해 주세요. <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
+        <p class="setting-help">이 비밀번호는 현재 브라우저에만 적용됩니다. 시크릿 창이나 브라우저 데이터 삭제 후에는 누구나 새 비밀번호를 설정할 수 있으므로 보호자의 실제 신원을 인증하는 기능은 아닙니다. 공유 기기에서는 보호자께서 직접 설정해 주세요. <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
         <p id="parentSetupStatus" class="connection-test-status" role="status" aria-live="polite"></p>
         <button id="createParentPinBtn" type="button" class="primary-wide">학부모 비밀번호 설정</button>
       </div>
