@@ -134,25 +134,12 @@
       <p class="modal-description">문제 전체를 AI가 분석하고 힌트를 한 번 더 검토해요. API 키는 Render 서버에서만 관리해요.</p>
       <input type="radio" name="mode" value="live" checked hidden />
       <div class="api-provider-fields" id="apiProviderFields">
-        <label class="field-label" for="apiProviderSelect">① API 제공업체</label>
-        <select id="apiProviderSelect" class="provider-select">
-          <option value="gemini">Google Gemini (Google AI Studio)</option>
-          <option value="freellmapi">FreeLLMAPI (무료 AI 자동 라우팅 · 개인 실험용)</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic Claude</option>
-          <option value="openrouter">OpenRouter (다양한 AI 모델)</option>
-          <option value="groq">Groq</option>
-          <option value="deepseek">DeepSeek</option>
-          <option value="mistral">Mistral AI</option>
-          <option value="together">Together AI</option>
-          <option value="xai">xAI</option>
-          <option value="custom">기타 OpenAI 호환 API (사용자 지정)</option>
-        </select>
-        <p class="provider-guide" id="providerGuide"></p>
-        <label class="field-label" for="apiModelInput">② AI 모델 이름 <span>(각 서비스가 제공하는 모델로 변경 가능)</span></label>
-        <input class="key-input model-input" id="apiModelInput" type="text" autocomplete="off" spellcheck="false" placeholder="예: gemini-3.1-flash-lite" />
-        <p class="setting-help" id="geminiAutoHelp" hidden>🔄 자동 전환: 1순위 3.5 Flash-Lite → 2순위 3.6 Flash → 3순위 3.8 Flash. 각 모델에서 429 제한이 발생하면 다음 모델로 넘어갑니다. 잠시 후 우선 모델을 다시 확인합니다.</p>
-        <div id="customApiRow" hidden><label class="field-label" for="apiBaseUrlInput">사용자 지정 기본 URL (HTTPS)</label><input class="key-input model-input" id="apiBaseUrlInput" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/v1" /><p class="setting-help">OpenAI 호환 Chat Completions API의 기본 주소를 입력하세요. /chat/completions는 자동으로 붙어요.</p></div>
+        <label class="field-label" for="apiProviderSelect">AI 제공업체</label>
+        <select id="apiProviderSelect" class="provider-select"><option value="gemini">Google Gemini</option></select>
+        <p class="provider-guide" id="providerGuide">Google Gemini를 사용합니다. 모델 선택과 자동 전환은 서버에서 관리해요.</p>
+        <input id="apiModelInput" type="hidden" value="auto" />
+        <p class="setting-help" id="geminiAutoHelp" hidden>모델은 서버에서 자동 선택합니다.</p>
+        <div id="customApiRow" hidden><input id="apiBaseUrlInput" type="hidden" value="" /></div>
         <div class="setting-help" id="serverKeyStatus" role="status" aria-live="polite">서버에 등록된 API 키 상태를 확인하고 있어요…</div>
         <p class="setting-help">🔒 API 키는 이 앱에 입력하지 않습니다. Render → Environment에 등록된 키를 서버가 직접 사용합니다. 키 내용은 휴대폰으로 전달하지 않아요.</p>
         <div class="api-connection-test">
@@ -173,12 +160,15 @@
       <div id="parentSetup" class="parent-gate" hidden>
         <h3>🔐 보호자 최초 설정</h3>
         <p>이 브라우저에는 아직 학부모 비밀번호가 없어요. 보호자께서 숫자 6~12자리 비밀번호를 설정해 주세요. 기본 비밀번호 0000은 더 이상 사용할 수 없어요.</p>
+        <label class="field-label" for="guardianEnrollmentCode">보호자 등록 코드</label>
+        <input id="guardianEnrollmentCode" class="key-input" type="password" autocomplete="off" placeholder="운영자가 별도로 안내한 등록 코드" />
+        <p class="setting-help">등록 코드는 보호자에게 별도 전달됩니다. 코드가 없다면 최초 등록을 할 수 없어요.</p>
         <label class="field-label" for="setupParentPin">새 학부모 비밀번호</label>
         <input id="setupParentPin" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="숫자 6~12자리" />
         <label class="field-label" for="setupParentPinConfirm">비밀번호 확인</label>
         <input id="setupParentPinConfirm" class="key-input" type="password" inputmode="numeric" autocomplete="new-password" minlength="6" maxlength="12" placeholder="같은 숫자 다시 입력" />
         <label class="guardian-confirm"><input id="guardianConfirm" type="checkbox" /> 이 기기의 보호자이며, 비밀번호 설정과 아동의 AI 학습 서비스 이용을 확인했습니다.</label>
-        <p class="setting-help">이 설정은 보호자 신원을 별도로 증명하지는 않아요. 공유 기기에서는 보호자께서 직접 설정해 주세요. <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
+        <p class="setting-help">등록 코드로 허용된 보호자만 최초 설정하도록 제한하지만, 법적 보호자 신원 인증을 대신하지는 않아요. 공유 기기에서는 보호자께서 직접 설정해 주세요. <a href="/privacy.html" target="_blank" rel="noopener noreferrer">개인정보 처리 안내 보기</a></p>
         <p id="parentSetupStatus" class="connection-test-status" role="status" aria-live="polite"></p>
         <button id="createParentPinBtn" type="button" class="primary-wide">학부모 비밀번호 설정</button>
       </div>

@@ -26,13 +26,39 @@ function constantEquals(a,b) {
   const aa=Buffer.from(String(a)), bb=Buffer.from(String(b));
   return aa.length === bb.length && crypto.timingSafeEqual(aa,bb);
 }
+// Browser boundary only, not user authentication. Non-browser clients can
+// forge Origin/Host; durable quotas and eventual account auth are still needed.
 function sameOrigin(req) {
-  if (!req.headers.origin) return true; // non-browser caller; PIN is still mandatory for public hosting
+  if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+  if (!req.headers.origin) return true; // Some legitimate clients omit Origin.
   try {
     const origin = new URL(String(req.headers.origin));
-    return (origin.protocol === 'https:' || origin.protocol === 'http:') &&
+    if (origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) return false;
+    const isProd = process.env.NODE_ENV === 'production';
+    const expectedProto = isProd ? 'https:' : (req.socket.encrypted ? 'https:' : 'http:');
+    return origin.protocol === expectedProto &&
       origin.host.toLowerCase() === String(req.headers.host || '').toLowerCase();
   } catch (_) { return false; }
+}
+function isJsonPost(req) {
+  return /^application\/json(?:\s*;|\s*$)/i.test(String(req.headers['content-type'] || ''));
+}
+function applySecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  }
+}
+// Only the operator may enable optional providers in production. Public
+// browsers never choose an arbitrary paid provider merely by editing JSON.
+const ENABLED_PROVIDERS = new Set(String(process.env.AI_ALLOWED_PROVIDERS || 'gemini')
+  .split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+function isProviderAllowed(provider) {
+  return process.env.NODE_ENV !== 'production' || ENABLED_PROVIDERS.has(provider);
 }
 // The app is publicly accessible. Apply simple server-side AI request caps
 // as a guardrail against accidentally consuming the server owner's quota.
@@ -117,7 +143,7 @@ async function aiQuotaExceeded(req, kind='hint') {
   }
 }
 
-const HINT_ENGINE_VERSION = 'v40-input-efficiency-' + TUTOR_ENGINE_VERSION;
+const HINT_ENGINE_VERSION = 'v42-guardian-media-privacy-' + TUTOR_ENGINE_VERSION;
 const REQUIRED_HINTS = 5;
 // Per-problem successes: the browser cannot unlock answers by faking a hint counter.
 // Data stays in server memory and resets if Render starts a new instance.
@@ -154,6 +180,11 @@ function getTrackedProblem(body) {
 // on each guardian's device. Render free hosts have no persistent disk.
 // v39: New browsers have NO default parent PIN. A guardian must configure one.
 const ANSWER_COOKIE = 'sb_answer_pin';
+// Enrollment requires an operator-supplied, high-entropy pilot code delivered
+// out of band. A cookie reset cannot turn a child's self-assertion into permission.
+// This is NOT verified adult identity and is not sufficient for public child launch.
+const GUARDIAN_ENROLLMENT_CODE = String(process.env.GUARDIAN_ENROLLMENT_CODE || '').trim();
+const guardianEnrollmentEnabled = GUARDIAN_ENROLLMENT_CODE.length >= 16;
 const answerCookieKey = crypto.createHash('sha256').update('saenggakbyeol-answer-pin-v14|' +
   (process.env.ANSWER_PIN_SECRET || APP_ACCESS_PIN || process.env.GEMINI_API_KEY || SESSION_TOKEN)).digest();
 function cookieValue(req, name) {
@@ -429,7 +460,9 @@ function freeGatewayReady() {
 function apiBaseUrl(provider, supplied) {
   if (provider === 'freellmapi') return freeGatewayUrl();
   if (provider !== 'custom') return API_PROVIDERS[provider].base;
-  const raw = typeof supplied === 'string' ? supplied.trim() : '';
+  // The public browser cannot choose an arbitrary HTTPS destination; that
+  // would turn the API proxy into an SSRF / credential-forwarding surface.
+  const raw = String(process.env.CUSTOM_API_BASE_URL || '').trim();
   if (!raw || raw.length > 300) return null;
   try {
     const url = new URL(raw);
@@ -445,15 +478,22 @@ function apiBaseUrl(provider, supplied) {
   } catch (_) { return null; }
 }
 function imageParts(image) {
-  if (!image) return null;
-  const m = image.match(/^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/=]+)$/);
-  return m ? { mime: m[1], data: m[2] } : null;
+  if (typeof image !== 'string' || image.length > 4 * 1024 * 1024) return null;
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+  if (!m || m[2].length % 4 !== 0) return null;
+  const buffer = Buffer.from(m[2], 'base64');
+  if (buffer.length < 12 || buffer.length > 3 * 1024 * 1024 || buffer.toString('base64') !== m[2]) return null;
+  const jpeg = buffer.length >= 4 && buffer[0]===0xff && buffer[1]===0xd8 && buffer[2]===0xff && buffer[buffer.length-2]===0xff && buffer[buffer.length-1]===0xd9;
+  const png = buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) && buffer.subarray(12,16).toString('ascii')==='IHDR';
+  const webp = buffer.subarray(0,4).toString('ascii')==='RIFF' && buffer.subarray(8,12).toString('ascii')==='WEBP' && buffer.readUInt32LE(4)+8===buffer.length;
+  if (!((m[1]==='image/jpeg' && jpeg) || (m[1]==='image/png' && png) || (m[1]==='image/webp' && webp))) return null;
+  return {mime:m[1],data:m[2]};
 }
 function apiError(status, provider = '') {
   // Show a useful *status code* without relaying untrusted upstream text, key, or user content.
   const gemini = provider === 'gemini';
   if (status === 400 || status === 422) return `HTTP ${status}: 모델 또는 요청 형식이 올바르지 않아요. 모델명을 확인해 주세요.`;
-  if (status === 404) return `HTTP 404: 해당 모델을 사용할 수 없어요. ${gemini ? 'gemini-3.8-flash 또는 AI Studio에 표시된 모델을 입력하세요.' : '서비스의 모델명을 확인해 주세요.'}`;
+  if (status === 404) return 'HTTP 404: 현재 AI 서비스를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.';
   if (status === 401) return 'HTTP 401: API 키가 유효하지 않아요. 키를 다시 확인해 주세요.';
   if (status === 403) return 'HTTP 403: 이 API 키의 프로젝트에 접근 권한이 없어요. Google AI Studio의 프로젝트·사용 권한을 확인해 주세요.';
   if (status === 402) return 'HTTP 402: API 결제 또는 크레딧 상태를 확인해 주세요.';
@@ -657,12 +697,13 @@ async function runTutorWithSafeRepair(body, invokeStage) {
 
 async function computeTutorResponse(body) {
   const image = body?.imageDataUrl;
-  if (image && (typeof image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,[a-zA-Z0-9+/=]+$/.test(image) || image.length > 4*1024*1024)) {
+  if (image && (typeof image !== 'string' || !imageParts(image))) {
     return { status:400, data:{error:'사진은 JPG·PNG·WEBP, 4MB 이내로 올려 주세요.'} };
   }
   const provider = body.provider || 'gemini';
   const details = API_PROVIDERS[provider];
   if (!details) return {status:400, data:{error:'지원하지 않는 AI 제공업체예요.'}};
+  if (!isProviderAllowed(provider)) return {status:403, data:{error:'이 AI 제공업체는 현재 운영자가 허용하지 않았어요.'}};
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : details.model;
   if (!safeProviderModel(model)) return {status:400, data:{error:'AI 모델 이름을 확인해 주세요.'}};
   const key = process.env[details.env]?.trim() || '';
@@ -684,8 +725,9 @@ async function computeTutorResponse(body) {
       createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:image, onModelUsed:m=>{lastUsedModel=m;}}));
     if (progress && answer.verdict !== 'correct') progress.hints++;
     return { status:200, data:{ ...answer, hintCount:progress?.hints ?? 0, requiredHints:REQUIRED_HINTS,
-      source:`${provider}-reviewed`, model:lastUsedModel,
-      geminiRoute: provider==='gemini'?geminiRouteInfo():undefined, engine:HINT_ENGINE_VERSION } };
+      source:`${provider}-reviewed`,
+      ...(process.env.NODE_ENV==='test' ? {model:lastUsedModel,geminiRoute:provider==='gemini'?geminiRouteInfo():undefined} : {}),
+      engine:HINT_ENGINE_VERSION } };
   } catch (error) {
     if (error instanceof TutorEngineError) return {status:error.status, data:retryErrorPayload(error)};
     return {status:502, data:{error:'AI가 문제를 검토하는 과정에서 오류가 생겼어요. 다시 시도해 주세요.', retryable:false}};
@@ -771,7 +813,16 @@ const STATIC = new Map([
   ['/apple-touch-icon.png', ['apple-touch-icon.png', 'image/png']],
 ]);
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url || '/', 'http://localhost');
+  applySecurityHeaders(res);
+  let url;
+  try { url = new URL(req.url || '/', 'http://localhost'); }
+  catch { return json(res,400,{error:'잘못된 요청 주소예요.'}); }
+  // Every JSON API mutation has the same browser-origin and media-type gate.
+  // This reduces CSRF/drive-by browser traffic; it does not authenticate users.
+  if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
+    if (!sameOrigin(req)) return json(res,403,{error:'허용되지 않은 출처예요.'});
+    if (!isJsonPost(req)) return json(res,415,{error:'JSON 요청만 지원해요.'});
+  }
   // Compatibility for old, cached app versions: no login is required.
   if (url.pathname === '/api/session' && req.method === 'GET') {
     return json(res, 200, { locked:false, authenticated:true });
@@ -780,8 +831,15 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok:true, loginRemoved:true });
   }
   if (url.pathname === '/api/photo/read' && req.method === 'POST') return withUsageContext(req,()=>readProblemPhoto(req,res));
-  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true, version: HINT_ENGINE_VERSION, persistentUsage:!!usageStore, apiProviders: Object.keys(API_PROVIDERS), aiConfigured: Object.entries(API_PROVIDERS).some(([id,p]) => id === 'freellmapi' ? freeGatewayReady() : !!process.env[p.env]) });
+  if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200,
+    process.env.NODE_ENV === 'test'
+      ? {ok:true, version:HINT_ENGINE_VERSION, persistentUsage:!!usageStore, apiProviders:Object.keys(API_PROVIDERS), aiConfigured:!!process.env.GEMINI_API_KEY}
+      : {ok:true, version:HINT_ENGINE_VERSION, persistentUsage:!!usageStore, aiService:'Google Gemini'});
   if (url.pathname === '/api/provider-config' && req.method === 'GET') {
+    if (process.env.NODE_ENV !== 'test') return json(res,200,{
+      providers:{gemini:{label:'Google Gemini',configured:Boolean(process.env.GEMINI_API_KEY?.trim())}},
+      aiService:'Google Gemini'
+    });
     const providers = Object.fromEntries(Object.entries(API_PROVIDERS).map(([id, p]) => [id, {
       label: p.name,
       env: p.env,
@@ -822,6 +880,12 @@ const server = http.createServer(async (req, res) => {
       return json(res,400,{error:'보호자 확인 후, 서로 같은 안전한 숫자 6~12자리를 입력해 주세요.'});
     try {
       if (readAnswerPin(req)) return json(res,409,{error:'이미 비밀번호가 설정돼 있어요. 학부모 모드에서 변경해 주세요.'});
+      if (!guardianEnrollmentEnabled) return json(res,503,{error:'학부모 최초 등록이 아직 준비되지 않았어요. 관리자에게 문의해 주세요.'});
+      if (typeof body.enrollmentCode !== 'string' || !constantEquals(body.enrollmentCode, GUARDIAN_ENROLLMENT_CODE)) {
+        markWrongPin(req);
+        return json(res,403,{error:'보호자 등록 코드가 일치하지 않아요. 관리자에게 받은 코드를 확인해 주세요.'});
+      }
+      clearPinFailures(req);
       putAnswerCookie(req,res,body.newPin);
       return json(res,201,{ok:true,pinConfigured:true,pinScope:'this-browser'});
     } catch(e) { return json(res,e.status||400,{error:e.message}); }
@@ -877,6 +941,7 @@ const server = http.createServer(async (req, res) => {
     if (quota) return json(res,quota.status||429,quota);
     const provider=body.provider || 'gemini', details=API_PROVIDERS[provider];
     if (!details) return json(res,400,{error:'AI 제공업체를 확인해 주세요.'});
+    if (!isProviderAllowed(provider)) return json(res,403,{error:'이 AI 제공업체는 현재 운영자가 허용하지 않았어요.'});
     const model=typeof body.model==='string' && body.model ? body.model : details.model;
     if (!safeProviderModel(model)) return json(res,400,{error:'모델 이름을 확인해 주세요.'});
     const key=process.env[details.env]?.trim() || '';
@@ -887,7 +952,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const result=await withUsageContext(req,()=>runAnswerRevealFlow({problem:body.problem,grade:body.grade,subject:body.subject,hasPhoto:!!photo && !body.photoTextConfirmed},
         createStageInvoker({provider,model,key,baseUrl:body.baseUrl,imageDataUrl:body.photoTextConfirmed?null:photo})));
-      return json(res,200,{...result,requiredHints:REQUIRED_HINTS, geminiRoute:provider==='gemini'?geminiRouteInfo():undefined});
+      return json(res,200,{...result,requiredHints:REQUIRED_HINTS,
+        ...(process.env.NODE_ENV==='test' && provider==='gemini' ? {geminiRoute:geminiRouteInfo()} : {})});
     } catch (e) { return json(res,e.status||502,{error:e instanceof TutorEngineError ? e.message:'정답을 정확히 검증하지 못했어요. 잠시 후 다시 시도해 주세요.'}); }
   }
   if (url.pathname === '/api/tutor') {

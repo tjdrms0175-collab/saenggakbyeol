@@ -9,7 +9,7 @@ async function boot(t){
   await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
   const port=reserve.address().port;
   await new Promise(resolve=>reserve.close(resolve));
-  const app=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,NODE_ENV:'test',PORT:String(port),HOST:'127.0.0.1',GEMINI_API_KEY:'test-only'},stdio:'ignore'});
+  const app=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,NODE_ENV:'test',PORT:String(port),HOST:'127.0.0.1',GEMINI_API_KEY:'test-only',GUARDIAN_ENROLLMENT_CODE:'guardian-pilot-registration-2026'},stdio:'ignore'});
   t.after(()=>app.kill());
   const base=`http://127.0.0.1:${port}`;
   for(let i=0;i<60;i++){
@@ -44,11 +44,11 @@ test('v39 no default guardian PIN; first-use setup and later PIN change work', a
   assert.equal(weak.status,400);
   const withoutGuardian=await post(base,'/api/parent/setup',{newPin:'826493',confirmPin:'826493',guardianConfirmed:false});
   assert.equal(withoutGuardian.status,400);
-  const setup=await post(base,'/api/parent/setup',{newPin:'826493',confirmPin:'826493',guardianConfirmed:true});
+  const setup=await post(base,'/api/parent/setup',{newPin:'826493',confirmPin:'826493',guardianConfirmed:true,enrollmentCode:'guardian-pilot-registration-2026'});
   assert.equal(setup.status,201);
   assert.match(setup.cookie||'',/sb_answer_pin=/);
   const cookie=setup.cookie.split(';')[0];
-  const noOverwrite=await post(base,'/api/parent/setup',{newPin:'592637',confirmPin:'592637',guardianConfirmed:true},cookie);
+  const noOverwrite=await post(base,'/api/parent/setup',{newPin:'592637',confirmPin:'592637',guardianConfirmed:true,enrollmentCode:'guardian-pilot-registration-2026'},cookie);
   assert.equal(noOverwrite.status,409);
   const wrong=await post(base,'/api/parent/verify',{pin:'0000'},cookie);
   assert.equal(wrong.status,403);
@@ -65,7 +65,7 @@ test('v39 no default guardian PIN; first-use setup and later PIN change work', a
 });
 test('v39 parent authentication does not bypass five-hint answer server gate',async t=>{
   const base=await boot(t);
-  const setup=await post(base,'/api/parent/setup',{newPin:'826493',confirmPin:'826493',guardianConfirmed:true});
+  const setup=await post(base,'/api/parent/setup',{newPin:'826493',confirmPin:'826493',guardianConfirmed:true,enrollmentCode:'guardian-pilot-registration-2026'});
   assert.equal(setup.status,201);
   const cookie=setup.cookie.split(';')[0];
   const answer=await post(base,'/api/answer/reveal',{pin:'826493',problemId:'not-yet-five',problem:'7 × 6은?',grade:'초3~4',subject:'수학'},cookie);

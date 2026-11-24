@@ -65,7 +65,7 @@
   let parentVerifiedPin = null; // Kept in memory only while parent mode is open.
   let reportAnswerExcerpt = ''; // Ephemeral AI reply text; never queued in localStorage.
   const state = {
-    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: savedPreferences.modeVersion === 11 && /^[a-z]+$/.test(savedPreferences.provider || '') ? savedPreferences.provider : 'gemini', model: savedPreferences.modeVersion === 11 && /^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(savedPreferences.model || '') ? (savedPreferences.provider==='gemini' ? 'gemini-3.1-flash-lite' : savedPreferences.model) : 'gemini-3.1-flash-lite', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
+    grade: ['초1~2','초3~4','초5~6'].includes(savedPreferences.grade) ? savedPreferences.grade : '초3~4', subject: '자동', detectedSubject: '자동', mode: 'live', provider: 'gemini', model: 'auto', baseUrl: typeof savedPreferences.baseUrl === 'string' ? savedPreferences.baseUrl.slice(0,300) : '',
     active: null, hintLevel: 0, answerShown: false, photo: null, busy: false,
     messages: [], records: readRecords(), toastTimer: null
   };
@@ -487,17 +487,7 @@
     saveRecords();
   }
   const PROVIDER_SETTINGS = {
-    freellmapi: { label: 'FreeLLMAPI (개인 실험용)', model: 'auto:smart', guide: '<a href="https://github.com/tashfeenahmed/freellmapi" target="_blank" rel="noopener noreferrer">FreeLLMAPI 공식 저장소</a> · 개인용 무료 API 라우터를 별도로 설치·운영해야 해요. 모델 자동 선택: auto:smart. Render에서는 서버에서 접속 가능한 HTTPS 주소와 API 키가 필요해요. 다른 제공업체로 아이의 질문이 전송될 수 있어요. 다수 사용자 공개 서비스에는 권장하지 않아요.' },
-    gemini: { label: 'Google Gemini', model: 'gemini-3.1-flash-lite', guide: 'Google AI Studio에서 Gemini API 키 발급 · <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">키 발급 페이지</a> · 자동 전환: ① Gemini 3.1 Flash-Lite → ② Gemini 3.5 Flash-Lite → ③ Gemini 3.8 Flash. 모델 선택과 전환은 Render 서버에서 관리해요. 429 제한에 걸린 모델은 일시적으로 건너뛰고 다시 확인합니다. 모델별 무료 한도와 요금은 계정마다 달라요.' },
-    openai: { label: 'OpenAI', model: 'gpt-4.1-mini', guide: '<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API 키 발급</a> · 별도 API 비용이 발생할 수 있어요.' },
-    anthropic: { label: 'Anthropic Claude', model: 'claude-sonnet-4-5', guide: '<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Claude API 키 발급</a> · 계정별 요금이 적용돼요.' },
-    openrouter: { label: 'OpenRouter', model: 'google/gemini-2.5-flash', guide: '<a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter API 키 발급</a> · 모델 이름과 요금/무료 표시를 확인하세요.' },
-    groq: { label: 'Groq', model: 'llama-3.3-70b-versatile', guide: '<a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq API 키 발급</a> · 이용 한도는 모델에 따라 달라요.' },
-    deepseek: { label: 'DeepSeek', model: 'deepseek-chat', guide: '<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek API 키 발급</a>' },
-    mistral: { label: 'Mistral AI', model: 'mistral-small-latest', guide: '<a href="https://console.mistral.ai/" target="_blank" rel="noopener noreferrer">Mistral AI Console</a>' },
-    together: { label: 'Together AI', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', guide: '<a href="https://api.together.ai/settings/api-keys" target="_blank" rel="noopener noreferrer">Together AI API 키 발급</a>' },
-    xai: { label: 'xAI', model: 'grok-4', guide: '<a href="https://console.x.ai/" target="_blank" rel="noopener noreferrer">xAI Console</a>' },
-    custom: { label: '사용자 지정 API', model: '', guide: 'OpenAI Chat Completions 호환 API만 지원합니다. 신뢰할 수 있는 제공업체의 HTTPS 주소만 입력하세요.' }
+    gemini: { label: 'Google Gemini', model: 'auto', guide: 'Google Gemini를 사용해 문제를 분석하고 힌트를 검토해요. 모델 선택과 자동 전환은 서버에서 관리합니다.' }
   };
   async function refreshApiServerStatus() {
     const el = $('#serverKeyStatus');
@@ -515,26 +505,14 @@
       if (!item) { el.textContent = '선택한 AI 제공업체 정보를 확인할 수 없어요.'; return; }
       el.textContent = item.configured
         ? `✅ ${item.label} 연결 설정이 서버에 등록되어 있어요. 앱에 키를 넣을 필요가 없어요.`
-        : (provider === 'freellmapi' ? '⚠️ FreeLLMAPI 실행 서버의 HTTPS 주소(FREELLMAPI_BASE_URL)와 통합 키(FREELLMAPI_API_KEY)를 Render에 입력하세요.' : `⚠️ ${item.label} API 키가 서버에 없어요. Render → Environment에서 ${item.env}를 등록해 주세요.`);
-      if (provider === 'gemini' && data.geminiRoute) {
-        const r=data.geminiRoute;
-        el.textContent += ` · 자동 모델: ${(r.models||[r.primary,r.secondary,r.tertiary]).filter(Boolean).join(' → ')}` + (r.current ? ` · 현재 ${r.current} 사용 가능` : ' · 모두 대기 중');
-      }
-      if (provider === 'gemini' && data.freeRouterFallbackEnabled) el.textContent += ' · ⚠️ Gemini가 제한/장애로 응답하지 않으면 학습 질문이 FreeLLMAPI의 다른 제공업체로 전송될 수 있어요.';
-      if (provider === 'freellmapi' && data.freeRouterGeminiReviewEnabled) el.textContent += ' · Gemini가 힌트/정답을 추가 검토하도록 설정되어 있어요.';
+        : '⚠️ Google Gemini 연결 설정을 확인해 주세요. 관리자에게 문의해 주세요.';
     } catch (_) {
       el.textContent = '서버 연결 상태를 확인하지 못했어요. 인터넷을 확인해 주세요.';
     }
   }
-  function showGeminiRouteNotice(reply) {
-    const el=$('#geminiRouteNotice');
-    if (!el) return;
-    const fallback=state.provider==='gemini' && reply?.geminiRoute?.fallbackActive &&
-      reply.usedModel && reply.usedModel!==reply.geminiRoute.primary;
-    if (fallback) {
-      el.hidden=false;
-      el.textContent=`🔄 앞선 Gemini 모델이 사용량 제한 상태여서 ${reply.usedModel} 모델로 자동 전환했어요. 제한이 풀리면 우선 모델을 다시 사용해요.`;
-    } else el.hidden=true;
+  function showGeminiRouteNotice(_reply) {
+    // Model IDs are intentionally kept private to the server.
+    const el=$('#geminiRouteNotice'); if (el) el.hidden=true;
   }
   function syncProviderFields({ switched = false } = {}) {
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
@@ -1038,6 +1016,7 @@
     $('#parentSetupStatus').textContent='';
     $('#setupParentPin').value='';
     $('#setupParentPinConfirm').value='';
+    $('#guardianEnrollmentCode').value='';
     $('#guardianConfirm').checked=false;
     $('#parentGate').hidden = true;
     $('#parentDashboard').hidden = true;
@@ -1096,7 +1075,7 @@
     button.disabled=true; status.textContent='보호자 비밀번호를 설정하는 중이에요…';
     try {
       const response=await fetch('/api/parent/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({newPin:pin,confirmPin,guardianConfirmed:true})});
+        body:JSON.stringify({newPin:pin,confirmPin,guardianConfirmed:true,enrollmentCode:$('#guardianEnrollmentCode').value.trim()})});
       const data=await response.json().catch(()=>({}));
       if (!response.ok || !data.ok) throw Error(data.error||'설정에 실패했어요.');
       parentVerifiedPin=pin;
@@ -1109,6 +1088,7 @@
     $('#parentPinInput').value='';
     $('#setupParentPin').value='';
     $('#setupParentPinConfirm').value='';
+    $('#guardianEnrollmentCode').value='';
     $('#parentSetup').hidden=true;
     $('#parentGate').hidden=true;
     $('#parentDashboard').hidden=false;
@@ -1191,7 +1171,7 @@
     if (state.busy) { $('#settingStatus').textContent = '응답이 끝난 뒤 설정을 바꿀 수 있어요.'; return; }
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = provider==='gemini' ? 'gemini-3.1-flash-lite' : $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'auto' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode === 'live' && !/^[a-zA-Z0-9_.:/+\-]{1,145}$/.test(model)) {
       $('#settingStatus').textContent = 'AI 모델 이름을 입력해 주세요.'; return;
@@ -1213,7 +1193,7 @@
     const button = $('#testApiConnectionBtn');
     const mode = document.querySelector('input[name="mode"]:checked')?.value || 'live';
     const provider = $('#apiProviderSelect').value;
-    const model = provider==='gemini' ? 'gemini-3.1-flash-lite' : $('#apiModelInput').value.trim();
+    const model = provider==='gemini' ? 'auto' : $('#apiModelInput').value.trim();
     const baseUrl = $('#apiBaseUrlInput').value.trim();
     if (mode !== 'live') { status.textContent = '먼저 외부 AI API 연결을 선택해 주세요.'; return; }
     if (reconnectOperation) { status.textContent = '다른 AI 질문이 진행 중이에요. 완료되면 연결을 시험해 주세요.'; return; }
@@ -1231,7 +1211,7 @@
       },'test');
       if (!result.hint) throw new Error('연결했지만 AI가 힌트를 반환하지 않았어요.');
       status.dataset.result = 'success';
-      status.textContent = `✅ 연결 성공! 실제 응답 모델: ${result.model || model}. 자동 재연결을 중지했어요.`;
+      status.textContent = '✅ Google Gemini 연결 성공! 자동 재연결을 중지했어요.';
       showGeminiRouteNotice({usedModel:result.model, geminiRoute:result.geminiRoute});
     } catch (error) {
       status.dataset.result = 'error';
